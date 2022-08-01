@@ -18,5 +18,9 @@
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
     "worterbuch-js": "^0.9.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/babymotte/worterbuch4ts.git"
   }
 }
