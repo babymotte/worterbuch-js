@@ -1,0 +1,18 @@
+{
+  "name": "worterbuch4ts",
+  "version": "0.9.0",
+  "description": "A high level Wörterbuch web client for TypeScript",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Michael Bachmann <mbachmann@bbmsoft.net>",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^4.7.4"
+  }
+}
