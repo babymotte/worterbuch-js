@@ -33,27 +33,19 @@ export type ServerMessage = AckMsg | StateMsg | PStateMsg | ErrMsg;
 
 export type Connection = {
   getValue: (key: Key) => Promise<Value>;
-
   pGetValues: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-
   get: (key: Key, callback?: StateCallback) => TransactionID;
-
   pGet: (
     requestPattern: RequestPattern,
     callback?: PStateCallback
   ) => TransactionID;
-
   set: (key: Key, value: Value) => TransactionID;
-
   subscribe: (key: Key, callback?: StateCallback) => TransactionID;
-
   pSubscribe: (
     requestPattern: RequestPattern,
     callback?: PStateCallback
   ) => TransactionID;
-
   close: () => void;
-
   onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
   onerror?: (event: Event) => any;
@@ -64,7 +56,7 @@ export async function wbinit() {
   return wbjsinit();
 }
 
-export function connect(address: string) {
+export function connect(address: string, parseJson?: boolean) {
   const socket = new WebSocket(address);
 
   const state = {
@@ -196,8 +188,9 @@ export function connect(address: string) {
   const processStateMsg = (msg: StateMsg) => {
     const {
       transactionId,
-      keyValue: { value },
+      keyValue: { value: rawValue },
     } = msg.state;
+    const value = parseJson ? JSON.parse(rawValue) : rawValue;
 
     const pendingPromise = pendingPromises.get(transactionId);
     if (pendingPromise) {
