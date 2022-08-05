@@ -45,6 +45,7 @@ export type Connection = {
     requestPattern: RequestPattern,
     callback?: PStateCallback
   ) => TransactionID;
+  unsubscribe: (transactionId: TransactionID) => TransactionID;
   close: () => void;
   onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
@@ -152,6 +153,13 @@ export function connect(address: string, parseJson?: boolean) {
     return transactionId;
   };
 
+  const unsubscribe = (transactionId: TransactionID): TransactionID => {
+    const msg = { unsubscribe: { transactionId } };
+    const buf = encode_client_message(msg);
+    socket.send(buf);
+    return transactionId;
+  };
+
   const close = () => socket.close();
 
   const connection: Connection = {
@@ -162,6 +170,7 @@ export function connect(address: string, parseJson?: boolean) {
     set,
     subscribe,
     pSubscribe,
+    unsubscribe,
     close,
   };
 
