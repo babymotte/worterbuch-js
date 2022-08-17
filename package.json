@@ -1,6 +1,6 @@
 {
   "name": "worterbuch4ts",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "A high level Wörterbuch web client for TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "publish": "npx tsc && npm publish"
+    "build": "npx tsc",
+    "publish": "npm run build"
   },
   "author": "Michael Bachmann <mbachmann@bbmsoft.net>",
   "license": "MIT",
@@ -18,7 +19,7 @@
   },
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
-    "worterbuch-js": "^0.11.0"
+    "worterbuch-js": "^0.12.0"
   },
   "repository": {
     "type": "git",

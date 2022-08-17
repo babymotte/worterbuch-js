@@ -40,10 +40,15 @@ export type Connection = {
     callback?: PStateCallback
   ) => TransactionID;
   set: (key: Key, value: Value) => TransactionID;
-  subscribe: (key: Key, callback?: StateCallback) => TransactionID;
+  subscribe: (
+    key: Key,
+    callback?: StateCallback,
+    unique?: boolean
+  ) => TransactionID;
   pSubscribe: (
     requestPattern: RequestPattern,
-    callback?: PStateCallback
+    callback?: PStateCallback,
+    unique?: boolean
   ) => TransactionID;
   unsubscribe: (transactionId: TransactionID) => TransactionID;
   close: () => void;
@@ -129,9 +134,13 @@ export function connect(address: string, json?: boolean) {
     return transactionId;
   };
 
-  const subscribe = (key: Key, onmessage?: StateCallback): TransactionID => {
+  const subscribe = (
+    key: Key,
+    onmessage?: StateCallback,
+    unique?: boolean
+  ): TransactionID => {
     const transactionId = nextTransactionId();
-    const msg = { subscribe: { transactionId, key } };
+    const msg = { subscribe: { transactionId, key, unique } };
     const buf = encode_client_message(msg);
     socket.send(buf);
     if (onmessage) {
@@ -142,10 +151,11 @@ export function connect(address: string, json?: boolean) {
 
   const pSubscribe = (
     requestPattern: RequestPattern,
-    onmessage?: PStateCallback
+    onmessage?: PStateCallback,
+    unique?: boolean
   ): TransactionID => {
     const transactionId = nextTransactionId();
-    const msg = { pSubscribe: { transactionId, requestPattern } };
+    const msg = { pSubscribe: { transactionId, requestPattern, unique } };
     const buf = encode_client_message(msg);
     socket.send(buf);
     if (onmessage) {
