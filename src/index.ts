@@ -245,6 +245,15 @@ export function connect(address: string, json?: boolean) {
     }
   };
 
+  const processErrMsg = (msg: ErrMsg) => {
+    const transactionId = msg.err.transactionId;
+    const pendingPromise = pendingPromises.get(transactionId);
+    if (pendingPromise) {
+      pendingPromises.delete(transactionId);
+      pendingPromise.reject(msg.err);
+    }
+  };
+
   socket.onmessage = async (e: MessageEvent) => {
     const buf = await e.data.arrayBuffer();
     const uint8View = new Uint8Array(buf);
@@ -256,6 +265,8 @@ export function connect(address: string, json?: boolean) {
       processStateMsg(<StateMsg>msg);
     } else if ((<PStateMsg>msg).pState) {
       processPStateMsg(<PStateMsg>msg);
+    } else if ((<ErrMsg>msg).err) {
+      processErrMsg(<ErrMsg>msg);
     }
   };
 
