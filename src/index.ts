@@ -6,7 +6,7 @@ import WebSocket from "isomorphic-ws";
 
 export type Key = string;
 export type RequestPattern = string;
-export type Value = string;
+export type Value = any;
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
 export type KeyValuePairs = [KeyValuePair];
@@ -57,7 +57,7 @@ export async function wbinit() {
   return wbjsinit();
 }
 
-export function connect(address: string, parseJson?: boolean) {
+export function connect(address: string, json?: boolean) {
   const socket = new WebSocket(address);
 
   const state = {
@@ -121,8 +121,9 @@ export function connect(address: string, parseJson?: boolean) {
   };
 
   const set = (key: Key, value: Value): TransactionID => {
+    const stringValue = json ? JSON.stringify(value) : value;
     const transactionId = nextTransactionId();
-    const msg = { set: { transactionId, key, value: JSON.stringify(value) } };
+    const msg = { set: { transactionId, key, value: stringValue } };
     const buf = encode_client_message(msg);
     socket.send(buf);
     return transactionId;
@@ -199,7 +200,7 @@ export function connect(address: string, parseJson?: boolean) {
       transactionId,
       keyValue: { value: rawValue },
     } = msg.state;
-    const value = parseJson ? JSON.parse(rawValue) : rawValue;
+    const value = json ? JSON.parse(rawValue) : rawValue;
 
     const pendingPromise = pendingPromises.get(transactionId);
     if (pendingPromise) {
@@ -223,7 +224,7 @@ export function connect(address: string, parseJson?: boolean) {
     const { transactionId, keyValuePairs } = msg.pState;
 
     const processedKeyValuePairs = keyValuePairs.map(({ key, value }) => {
-      return { key, value: JSON.parse(value) };
+      return { key, value: json ? JSON.parse(value) : value };
     });
 
     const pendingPromise = pendingPromises.get(transactionId);
