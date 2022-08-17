@@ -140,7 +140,7 @@ export function connect(address: string, json?: boolean) {
     unique?: boolean
   ): TransactionID => {
     const transactionId = nextTransactionId();
-    const msg = { subscribe: { transactionId, key, unique } };
+    const msg = { subscribe: { transactionId, key, unique: unique || false } };
     const buf = encode_client_message(msg);
     socket.send(buf);
     if (onmessage) {
@@ -155,7 +155,9 @@ export function connect(address: string, json?: boolean) {
     unique?: boolean
   ): TransactionID => {
     const transactionId = nextTransactionId();
-    const msg = { pSubscribe: { transactionId, requestPattern, unique } };
+    const msg = {
+      pSubscribe: { transactionId, requestPattern, unique: unique || false },
+    };
     const buf = encode_client_message(msg);
     socket.send(buf);
     if (onmessage) {
