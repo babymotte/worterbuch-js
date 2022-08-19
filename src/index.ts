@@ -10,6 +10,8 @@ export type Value = any;
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
 export type KeyValuePairs = [KeyValuePair];
+export type ProtocolVersion = { major: number; minor: number };
+export type ProtocolVersions = [ProtocolVersion];
 export type ErrorCode = number;
 export type StateCallback = (value: Value) => void;
 export type PStateCallback = (values: KeyValuePairs) => void;
@@ -25,11 +27,23 @@ export type Err = {
   errorCode: ErrorCode;
   metaData: any;
 };
+export type Handshake = {
+  supportedProtocolVersions: ProtocolVersions;
+  separator: string;
+  wildcard: string;
+  multiWildcard: string;
+};
 export type AckMsg = { ack: Ack };
 export type StateMsg = { state: State };
 export type PStateMsg = { pState: PState };
 export type ErrMsg = { err: Err };
-export type ServerMessage = AckMsg | StateMsg | PStateMsg | ErrMsg;
+export type HandshakeMsg = { handshake: Handshake };
+export type ServerMessage =
+  | AckMsg
+  | StateMsg
+  | PStateMsg
+  | ErrMsg
+  | HandshakeMsg;
 
 export type Connection = {
   getValue: (key: Key) => Promise<Value>;
@@ -56,6 +70,7 @@ export type Connection = {
   onclose?: (event: CloseEvent) => any;
   onerror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
+  onhandshake?: (handshake: Handshake) => any;
 };
 
 export async function wbinit() {
@@ -266,6 +281,13 @@ export function connect(address: string, json?: boolean) {
     }
   };
 
+  const processHandshakeMsg = (msg: HandshakeMsg) => {
+    if (connection.onhandshake) {
+      console.log(msg);
+      connection.onhandshake(msg.handshake);
+    }
+  };
+
   socket.onmessage = async (e: MessageEvent) => {
     const buf = await e.data.arrayBuffer();
     const uint8View = new Uint8Array(buf);
@@ -279,6 +301,8 @@ export function connect(address: string, json?: boolean) {
       processPStateMsg(<PStateMsg>msg);
     } else if ((<ErrMsg>msg).err) {
       processErrMsg(<ErrMsg>msg);
+    } else if ((<HandshakeMsg>msg).handshake) {
+      processHandshakeMsg(<HandshakeMsg>msg);
     }
   };
 
