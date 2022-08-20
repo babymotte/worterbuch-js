@@ -1,6 +1,6 @@
 {
   "name": "worterbuch4ts",
-  "version": "0.13.0",
+  "version": "0.15.0",
   "description": "A high level Wörterbuch web client for TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
-    "worterbuch-js": "^0.13.0"
+    "worterbuch-js": "^0.15.1"
   },
   "repository": {
     "type": "git",
