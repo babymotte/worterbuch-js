@@ -1,7 +1,7 @@
 import wbjsinit, {
   encode_client_message,
   decode_server_message,
-} from "worterbuch-js";
+} from "worterbuch-wasm";
 import WebSocket from "isomorphic-ws";
 
 export type Key = string;

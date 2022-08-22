@@ -1,6 +1,6 @@
 {
-  "name": "worterbuch4ts",
-  "version": "0.15.0",
+  "name": "worterbuch-js",
+  "version": "0.17.0",
   "description": "A high level Wörterbuch web client for TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
-    "worterbuch-js": "^0.15.1"
+    "worterbuch-wasm": "^0.17.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/babymotte/worterbuch4ts.git"
+    "url": "https://github.com/babymotte/worterbuch-js.git"
   }
 }
