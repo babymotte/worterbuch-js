@@ -9,9 +9,9 @@ export type RequestPattern = string;
 export type Value = any;
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
-export type KeyValuePairs = [KeyValuePair];
+export type KeyValuePairs = KeyValuePair[];
 export type ProtocolVersion = { major: number; minor: number };
-export type ProtocolVersions = [ProtocolVersion];
+export type ProtocolVersions = ProtocolVersion[];
 export type ErrorCode = number;
 export type StateCallback = (value: Value) => void;
 export type PStateCallback = (values: KeyValuePairs) => void;
@@ -227,7 +227,7 @@ export function connect(address: string, json?: boolean) {
       transactionId,
       keyValue: { value: rawValue },
     } = msg.state;
-    const value = json ? JSON.parse(rawValue) : rawValue;
+    const value = json ? parse(rawValue) : rawValue;
 
     const pendingPromise = pendingPromises.get(transactionId);
     if (pendingPromise) {
@@ -251,7 +251,7 @@ export function connect(address: string, json?: boolean) {
     const { transactionId, keyValuePairs } = msg.pState;
 
     const processedKeyValuePairs = keyValuePairs.map(({ key, value }) => {
-      return { key, value: json ? JSON.parse(value) : value };
+      return { key, value: json ? parse(value) : value };
     });
 
     const pendingPromise = pendingPromises.get(transactionId);
@@ -307,4 +307,17 @@ export function connect(address: string, json?: boolean) {
   };
 
   return connection;
+}
+
+function parse(value: string | undefined): undefined {
+  if (value) {
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      console.log("Error parsing JSON message", value, ":", e);
+      return undefined;
+    }
+  }
+
+  return undefined;
 }
