@@ -6,6 +6,7 @@ import WebSocket from "isomorphic-ws";
 
 export type Key = string;
 export type RequestPattern = string;
+export type RequestPatterns = RequestPattern[];
 export type Value = any;
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
@@ -27,8 +28,13 @@ export type Err = {
   errorCode: ErrorCode;
   metaData: any;
 };
-export type Handshake = {
+export type HandshakeRequest = {
   supportedProtocolVersions: ProtocolVersions;
+  lastWill: KeyValuePairs;
+  graveGoods: RequestPatterns;
+};
+export type Handshake = {
+  protocolVersion: ProtocolVersion;
   separator: string;
   wildcard: string;
   multiWildcard: string;
@@ -38,6 +44,7 @@ export type StateMsg = { state: State };
 export type PStateMsg = { pState: PState };
 export type ErrMsg = { err: Err };
 export type HandshakeMsg = { handshake: Handshake };
+export type HandshakeRequestMsg = { handshakeRequest: HandshakeRequest };
 export type ServerMessage =
   | AckMsg
   | StateMsg
@@ -203,10 +210,20 @@ export function connect(address: string, json?: boolean) {
   };
 
   socket.onopen = (e: Event) => {
+    console.log("Connected to server.");
     state.connected = true;
     if (connection.onopen) {
       connection.onopen(e);
     }
+    const handshake = {
+      handshakeRequest: {
+        supportedProtocolVersions: [{ major: 0, minor: 2 }],
+        lastWill: [],
+        graveGoods: [],
+      },
+    };
+    const buf = encode_client_message(handshake);
+    socket.send(buf);
   };
 
   socket.onclose = (e: CloseEvent) => {
@@ -283,7 +300,6 @@ export function connect(address: string, json?: boolean) {
 
   const processHandshakeMsg = (msg: HandshakeMsg) => {
     if (connection.onhandshake) {
-      console.log(msg);
       connection.onhandshake(msg.handshake);
     }
   };
