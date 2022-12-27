@@ -3,12 +3,14 @@ import wbjsinit, {
   decode_server_message,
 } from "worterbuch-wasm";
 import WebSocket from "isomorphic-ws";
+import { v4 as uuidv4 } from "uuid";
 
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
 export type Value = any;
 export type TransactionID = number;
+export type SubscriptionID = string;
 export type KeyValuePair = { key: Key; value: Value };
 export type KeyValuePairs = KeyValuePair[];
 export type ProtocolVersion = { major: number; minor: number };
@@ -65,19 +67,22 @@ export type Connection = {
     key: Key,
     callback?: StateCallback,
     unique?: boolean
-  ) => TransactionID;
+  ) => SubscriptionID;
   pSubscribe: (
     requestPattern: RequestPattern,
     callback?: PStateCallback,
     unique?: boolean
-  ) => TransactionID;
-  unsubscribe: (transactionId: TransactionID) => TransactionID;
+  ) => SubscriptionID;
+  unsubscribe: (subscriptionID: SubscriptionID) => void;
   close: () => void;
   onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
   onerror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
+  separator: string;
+  wildcard: string;
+  multiWildcard: string;
 };
 
 export async function wbinit() {
@@ -85,6 +90,12 @@ export async function wbinit() {
 }
 
 export function connect(address: string, json?: boolean) {
+  console.log("Connecting to Worterbuch server " + address + " …");
+  if (json) {
+    console.log("Using JSON serde.");
+  } else {
+    console.log("Not using JSON serde.");
+  }
   const socket = new WebSocket(address);
 
   const state = {
@@ -98,7 +109,18 @@ export function connect(address: string, json?: boolean) {
 
   const pendingPromises = new Map();
   const pendings = new Map();
-  const subscriptions = new Map();
+  const subscriptionTransactionIDs = new Map<Key, TransactionID>();
+  const psubscriptionTransactionIDs = new Map<RequestPattern, TransactionID>();
+  const subscriptionIDs = new Map<SubscriptionID, TransactionID>();
+  const subscriptions = new Map<
+    TransactionID,
+    Map<SubscriptionID, StateCallback>
+  >();
+  const psubscriptions = new Map<
+    TransactionID,
+    Map<SubscriptionID, PStateCallback>
+  >();
+  const cache = new Map<Key, Value>();
 
   const getValue = async (key: Key): Promise<Value> => {
     const transactionId = nextTransactionId();
@@ -160,39 +182,94 @@ export function connect(address: string, json?: boolean) {
     key: Key,
     onmessage?: StateCallback,
     unique?: boolean
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { subscribe: { transactionId, key, unique: unique || false } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      subscriptions.set(transactionId, onmessage);
+  ): SubscriptionID => {
+    const subscriptionID = uuidv4();
+    const existingTransactionID = subscriptionTransactionIDs.get(key);
+    if (existingTransactionID) {
+      subscriptionIDs.set(subscriptionID, existingTransactionID);
+      if (onmessage) {
+        const listeners = subscriptions.get(existingTransactionID);
+        listeners?.set(subscriptionID, onmessage);
+        const cached = cache.get(key);
+        if (cached) {
+          onmessage(cached);
+        }
+      }
+    } else {
+      const transactionId = nextTransactionId();
+      subscriptionTransactionIDs.set(key, transactionId);
+      subscriptionIDs.set(subscriptionID, transactionId);
+      const msg = {
+        subscribe: { transactionId, key, unique: unique || false },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        const listeners = new Map();
+        listeners.set(subscriptionID, onmessage);
+        subscriptions.set(transactionId, listeners);
+      }
     }
-    return transactionId;
+
+    return subscriptionID;
   };
 
   const pSubscribe = (
     requestPattern: RequestPattern,
     onmessage?: PStateCallback,
     unique?: boolean
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = {
-      pSubscribe: { transactionId, requestPattern, unique: unique || false },
-    };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      subscriptions.set(transactionId, onmessage);
+  ): SubscriptionID => {
+    const subscriptionID = uuidv4();
+    const existingTransactionID =
+      psubscriptionTransactionIDs.get(requestPattern);
+    if (existingTransactionID) {
+      subscriptionIDs.set(subscriptionID, existingTransactionID);
+      if (onmessage) {
+        const listeners = subscriptions.get(existingTransactionID);
+        listeners?.set(subscriptionID, onmessage);
+        const cached: KeyValuePairs = [];
+        cache.forEach((value, key) => {
+          if (matches(key, requestPattern, connection)) {
+            cached.push({ key, value });
+          }
+        });
+        onmessage(cached);
+      }
+    } else {
+      const transactionId = nextTransactionId();
+      psubscriptionTransactionIDs.set(requestPattern, transactionId);
+      subscriptionIDs.set(subscriptionID, transactionId);
+      const msg = {
+        pSubscribe: { transactionId, requestPattern, unique: unique || false },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        const listeners = new Map();
+        listeners.set(subscriptionID, onmessage);
+        subscriptions.set(transactionId, listeners);
+      }
     }
-    return transactionId;
+
+    return subscriptionID;
   };
 
-  const unsubscribe = (transactionId: TransactionID): TransactionID => {
-    const msg = { unsubscribe: { transactionId } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    return transactionId;
+  const unsubscribe = (subscriptionID: SubscriptionID) => {
+    const transactionID = subscriptionIDs.get(subscriptionID);
+    if (!transactionID) {
+      return;
+    }
+    subscriptionIDs.delete(subscriptionID);
+
+    const listeners = subscriptions.get(transactionID);
+    if (listeners) {
+      listeners.delete(subscriptionID);
+    }
+
+    const plisteners = psubscriptions.get(transactionID);
+    if (plisteners) {
+      plisteners.delete(subscriptionID);
+    }
   };
 
   const close = () => socket.close();
@@ -207,6 +284,9 @@ export function connect(address: string, json?: boolean) {
     pSubscribe,
     unsubscribe,
     close,
+    separator: "/",
+    wildcard: "?",
+    multiWildcard: "#",
   };
 
   socket.onopen = (e: Event) => {
@@ -227,6 +307,7 @@ export function connect(address: string, json?: boolean) {
   };
 
   socket.onclose = (e: CloseEvent) => {
+    console.log("Connection to server closed.");
     state.connected = false;
     if (connection.onclose) {
       connection.onclose(e);
@@ -242,9 +323,11 @@ export function connect(address: string, json?: boolean) {
   const processStateMsg = (msg: StateMsg) => {
     const {
       transactionId,
-      keyValue: { value: rawValue },
+      keyValue: { key, value: rawValue },
     } = msg.state;
     const value = json ? parse(rawValue) : rawValue;
+
+    cache.set(key, value);
 
     const pendingPromise = pendingPromises.get(transactionId);
     if (pendingPromise) {
@@ -260,7 +343,7 @@ export function connect(address: string, json?: boolean) {
 
     const subscription = subscriptions.get(transactionId);
     if (subscription) {
-      subscription(value);
+      subscription.forEach((onState) => onState(value));
     }
   };
 
@@ -270,6 +353,8 @@ export function connect(address: string, json?: boolean) {
     const processedKeyValuePairs = keyValuePairs.map(({ key, value }) => {
       return { key, value: json ? parse(value) : value };
     });
+
+    processedKeyValuePairs.forEach(({ key, value }) => cache.set(key, value));
 
     const pendingPromise = pendingPromises.get(transactionId);
     if (pendingPromise) {
@@ -285,7 +370,7 @@ export function connect(address: string, json?: boolean) {
 
     const subscription = subscriptions.get(transactionId);
     if (subscription) {
-      subscription(processedKeyValuePairs);
+      subscription.forEach((onPState) => onPState(processedKeyValuePairs));
     }
   };
 
@@ -300,6 +385,9 @@ export function connect(address: string, json?: boolean) {
 
   const processHandshakeMsg = (msg: HandshakeMsg) => {
     if (connection.onhandshake) {
+      connection.separator = msg.handshake.separator;
+      connection.wildcard = msg.handshake.wildcard;
+      connection.multiWildcard = msg.handshake.multiWildcard;
       connection.onhandshake(msg.handshake);
     }
   };
@@ -330,10 +418,39 @@ function parse(value: string | undefined): undefined {
     try {
       return JSON.parse(value);
     } catch (e) {
-      console.log("Error parsing JSON message", value, ":", e);
       return undefined;
     }
   }
 
   return undefined;
+}
+
+function matches(key: string, pattern: string, connection: Connection) {
+  const keySplit = key.split(connection.separator);
+  const patternSplit = pattern.split(connection.separator);
+
+  if (patternSplit.length > keySplit.length) {
+    return false;
+  }
+
+  if (
+    keySplit.length > patternSplit.length &&
+    patternSplit[patternSplit.length - 1] !== connection.multiWildcard
+  ) {
+    return false;
+  }
+
+  for (let i = 0; i < patternSplit.length; i++) {
+    if (patternSplit[i] === connection.wildcard) {
+      continue;
+    }
+    if (patternSplit[i] === connection.multiWildcard) {
+      return i === patternSplit.length - 1;
+    }
+    if (patternSplit[i] !== keySplit[i]) {
+      return false;
+    }
+  }
+
+  return true;
 }
