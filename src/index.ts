@@ -80,6 +80,7 @@ export type Connection = {
   onerror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
+  preSubscribe: (pattern: RequestPattern) => void;
   separator: string;
   wildcard: string;
   multiWildcard: string;
@@ -272,6 +273,14 @@ export function connect(address: string, json?: boolean) {
     }
   };
 
+  const preSubscribe = (pattern: RequestPattern) => {
+    pGet(pattern, (values: KeyValuePairs) => {
+      values.forEach(({ key, value }) => {
+        subscribe(key);
+      });
+    });
+  };
+
   const close = () => socket.close();
 
   const connection: Connection = {
@@ -283,6 +292,7 @@ export function connect(address: string, json?: boolean) {
     subscribe,
     pSubscribe,
     unsubscribe,
+    preSubscribe,
     close,
     separator: "/",
     wildcard: "?",
