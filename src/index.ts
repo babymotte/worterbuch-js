@@ -80,7 +80,7 @@ export type Connection = {
   onerror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
-  preSubscribe: (pattern: RequestPattern) => void;
+  preSubscribe: (pattern: RequestPattern, onsubscribed?: () => void) => void;
   separator: string;
   wildcard: string;
   multiWildcard: string;
