@@ -80,7 +80,10 @@ export type Connection = {
   onerror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
-  preSubscribe: (pattern: RequestPattern, onsubscribed?: () => void) => void;
+  preSubscribe: (
+    pattern: RequestPattern,
+    onsubscribed?: (progress: [number, number]) => void
+  ) => void;
   separator: string;
   wildcard: string;
   multiWildcard: string;
@@ -273,14 +276,19 @@ export function connect(address: string, json?: boolean) {
     }
   };
 
-  const preSubscribe = (pattern: RequestPattern, onsubscribed?: () => void) => {
+  const preSubscribe = (
+    pattern: RequestPattern,
+    onsubscribed?: (progress: [number, number]) => void
+  ) => {
     pGet(pattern, (values: KeyValuePairs) => {
       const pending = new Set();
+      const total = values.length;
       values.forEach(({ key, value }) => {
         pending.add(key);
         subscribe(key, (val) => {
-          if (onsubscribed && pending.delete(key) && pending.size === 0) {
-            onsubscribed();
+          if (onsubscribed && pending.delete(key)) {
+            const done = total - pending.size;
+            onsubscribed([done, total]);
           }
         });
       });
