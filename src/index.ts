@@ -273,10 +273,16 @@ export function connect(address: string, json?: boolean) {
     }
   };
 
-  const preSubscribe = (pattern: RequestPattern) => {
+  const preSubscribe = (pattern: RequestPattern, onsubscribed?: () => void) => {
     pGet(pattern, (values: KeyValuePairs) => {
+      const pending = new Set();
       values.forEach(({ key, value }) => {
-        subscribe(key);
+        pending.add(key);
+        subscribe(key, (val) => {
+          if (onsubscribed && pending.delete(key) && pending.size === 0) {
+            onsubscribed();
+          }
+        });
       });
     });
   };
