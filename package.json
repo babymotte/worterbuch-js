@@ -1,6 +1,6 @@
 {
   "name": "worterbuch-js",
-  "version": "0.20.5",
+  "version": "0.21.0",
   "description": "A high level Wörterbuch web client for TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
     "uuid": "^9.0.0",
-    "worterbuch-wasm": "^0.20.0"
+    "worterbuch-wasm": "^0.21.0"
   },
   "repository": {
     "type": "git",
