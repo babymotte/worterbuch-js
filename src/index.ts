@@ -1,7 +1,3 @@
-import wbjsinit, {
-  encode_client_message,
-  decode_server_message,
-} from "worterbuch-wasm";
 import WebSocket from "isomorphic-ws";
 import { v4 as uuidv4 } from "uuid";
 
@@ -41,18 +37,52 @@ export type Handshake = {
   wildcard: string;
   multiWildcard: string;
 };
+export type Get = { transactionId: number; key: string };
+export type PGet = { transactionId: number; requestPattern: string };
+export type Subscribe = {
+  transactionId: number;
+  key: string;
+  unique?: boolean;
+};
+export type PSubscribe = {
+  transactionId: number;
+  requestPattern: string;
+  unique?: boolean;
+};
 export type AckMsg = { ack: Ack };
 export type StateMsg = { state: State };
 export type PStateMsg = { pState: PState };
 export type ErrMsg = { err: Err };
 export type HandshakeMsg = { handshake: Handshake };
 export type HandshakeRequestMsg = { handshakeRequest: HandshakeRequest };
+export type SetMsg = {
+  set: { transactionId: number; key: string; value: Value };
+};
+export type GetMsg = {
+  get: Get;
+};
+export type PGetMsg = {
+  pGet: PGet;
+};
+export type SubMsg = {
+  subscribe: Subscribe;
+};
+export type PSubMsg = {
+  pSubscribe: PSubscribe;
+};
 export type ServerMessage =
   | AckMsg
   | StateMsg
   | PStateMsg
   | ErrMsg
   | HandshakeMsg;
+export type ClientMessage =
+  | HandshakeRequestMsg
+  | SetMsg
+  | GetMsg
+  | PGetMsg
+  | SubMsg
+  | PSubMsg;
 
 export type Connection = {
   getValue: (key: Key) => Promise<Value>;
@@ -77,7 +107,8 @@ export type Connection = {
   close: () => void;
   onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
-  onerror?: (event: Event) => any;
+  onerror?: (event: Err) => any;
+  onwserror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
   preSubscribe: (
@@ -89,17 +120,9 @@ export type Connection = {
   multiWildcard: string;
 };
 
-export async function wbinit() {
-  return wbjsinit();
-}
-
-export function connect(address: string, json?: boolean) {
+export function connect(address: string) {
   console.log("Connecting to Worterbuch server " + address + " …");
-  if (json) {
-    console.log("Using JSON serde.");
-  } else {
-    console.log("Not using JSON serde.");
-  }
+
   const socket = new WebSocket(address);
 
   const state = {
@@ -174,9 +197,8 @@ export function connect(address: string, json?: boolean) {
   };
 
   const set = (key: Key, value: Value): TransactionID => {
-    const stringValue = json ? JSON.stringify(value) : value;
     const transactionId = nextTransactionId();
-    const msg = { set: { transactionId, key, value: stringValue } };
+    const msg = { set: { transactionId, key, value } };
     const buf = encode_client_message(msg);
     socket.send(buf);
     return transactionId;
@@ -321,7 +343,7 @@ export function connect(address: string, json?: boolean) {
     }
     const handshake = {
       handshakeRequest: {
-        supportedProtocolVersions: [{ major: 0, minor: 2 }],
+        supportedProtocolVersions: [{ major: 0, minor: 3 }],
         lastWill: [],
         graveGoods: [],
       },
@@ -339,17 +361,16 @@ export function connect(address: string, json?: boolean) {
   };
 
   socket.onerror = (e: Event) => {
-    if (connection.onerror) {
-      connection.onerror(e);
+    if (connection.onwserror) {
+      connection.onwserror(e);
     }
   };
 
   const processStateMsg = (msg: StateMsg) => {
     const {
       transactionId,
-      keyValue: { key, value: rawValue },
+      keyValue: { key, value },
     } = msg.state;
-    const value = json ? parse(rawValue) : rawValue;
 
     cache.set(key, value);
 
@@ -375,7 +396,7 @@ export function connect(address: string, json?: boolean) {
     const { transactionId, keyValuePairs } = msg.pState;
 
     const processedKeyValuePairs = keyValuePairs.map(({ key, value }) => {
-      return { key, value: json ? parse(value) : value };
+      return { key, value };
     });
 
     processedKeyValuePairs.forEach(({ key, value }) => cache.set(key, value));
@@ -405,6 +426,9 @@ export function connect(address: string, json?: boolean) {
       pendingPromises.delete(transactionId);
       pendingPromise.reject(msg.err);
     }
+    if (connection.onerror) {
+      connection.onerror(msg.err);
+    }
   };
 
   const processHandshakeMsg = (msg: HandshakeMsg) => {
@@ -417,9 +441,8 @@ export function connect(address: string, json?: boolean) {
   };
 
   socket.onmessage = async (e: MessageEvent) => {
-    const buf = await e.data.arrayBuffer();
-    const uint8View = new Uint8Array(buf);
-    const msg: ServerMessage = decode_server_message(uint8View);
+    const msg: ServerMessage = decode_server_message(e.data);
+
     if (connection.onmessage) {
       connection.onmessage(msg);
     }
@@ -477,4 +500,12 @@ function matches(key: string, pattern: string, connection: Connection) {
   }
 
   return true;
+}
+
+function encode_client_message(msg: ClientMessage): string {
+  return JSON.stringify(msg);
+}
+
+function decode_server_message(msg: string): ServerMessage {
+  return JSON.parse(msg);
 }
