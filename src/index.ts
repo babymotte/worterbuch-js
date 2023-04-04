@@ -146,7 +146,11 @@ export type Connection = {
   multiWildcard: string;
 };
 
-export function connect(address: string) {
+export function connect(
+  address: string,
+  lastWill?: KeyValuePairs,
+  graveGoods?: Key[]
+) {
   console.log("Connecting to Worterbuch server " + address + " …");
 
   const socket = new WebSocket(address);
@@ -400,8 +404,8 @@ export function connect(address: string) {
     const handshake = {
       handshakeRequest: {
         supportedProtocolVersions: [{ major: 0, minor: 4 }],
-        lastWill: [],
-        graveGoods: [],
+        lastWill: lastWill || [],
+        graveGoods: graveGoods || [],
       },
     };
     const buf = encode_client_message(handshake);
