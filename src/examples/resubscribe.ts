@@ -4,20 +4,21 @@ import { sleep } from "./util";
 const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
   wb.pDel("hello/#");
 
-  let sid = wb.subscribeLs("hello", console.log);
+  let sid;
 
+  wb.set("hello", "world");
   await sleep(1);
-  wb.set("hello/there", 123);
-  await sleep(1);
-  wb.set("hello/world", 123);
-  await sleep(1);
-  wb.set("hello/you", 123);
-  await sleep(1);
-  wb.pDel("hello/#");
+  sid = wb.subscribe("hello", console.log);
   await sleep(1);
   wb.unsubscribeLs(sid);
-  wb.set("hello/you", 123);
   await sleep(1);
+  sid = wb.subscribe("hello", console.log);
+  await sleep(1);
+  wb.unsubscribeLs(sid);
+  await sleep(1);
+  sid = wb.subscribe("hello", console.log);
+  await sleep(1);
+  wb.unsubscribeLs(sid);
 
   wb.close();
 });

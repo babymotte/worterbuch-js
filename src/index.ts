@@ -436,12 +436,6 @@ export function connect(
       if (plisteners) {
         plisteners.delete(subscriptionID);
       }
-
-      const msg = {
-        unsubscribe: { transactionId },
-      };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
     };
 
     const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
@@ -499,12 +493,6 @@ export function connect(
       if (listeners) {
         listeners.delete(subscriptionID);
       }
-
-      const msg = {
-        unsubscribeLs: { transactionId },
-      };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
     };
 
     const close = () => socket.close();
