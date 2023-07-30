@@ -5,6 +5,7 @@ export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
 export type Value = any;
+export type Children = string[];
 export type TransactionID = number;
 export type SubscriptionID = string;
 export type KeyValuePair = { key: Key; value: Value };
@@ -17,8 +18,12 @@ export type PStateEvent = {
   keyValuePairs?: KeyValuePairs;
   deleted?: KeyValuePairs;
 };
+export type LsEvent = {
+  children: Children;
+};
 export type StateCallback = (event: StateEvent) => void;
 export type PStateCallback = (event: PStateEvent) => void;
+export type LsCallback = (event: LsEvent) => void;
 export type Ack = { transactionId: TransactionID };
 export type State = {
   transactionId: TransactionID;
@@ -31,6 +36,7 @@ export type PState = {
   keyValuePairs: KeyValuePairs | undefined;
   deleted: KeyValuePairs | undefined;
 };
+export type LsState = { transactionId: TransactionID; children: Children };
 export type Err = {
   transactionId: TransactionID;
   errorCode: ErrorCode;
@@ -61,11 +67,28 @@ export type PSubscribe = {
   requestPattern: string;
   unique?: boolean;
 };
+export type Unsubscribe = {
+  transactionId: number;
+};
+export type Ls = {
+  transactionId: number;
+  parent: string;
+};
+export type SubscribeLs = {
+  transactionId: number;
+  parent: string;
+};
+export type UnsubscribeLs = {
+  transactionId: number;
+};
 export type AckMsg = { ack: Ack };
 export type StateMsg = { state: State };
 export type PStateMsg = { pState: PState };
 export type ErrMsg = { err: Err };
 export type HandshakeMsg = { handshake: Handshake };
+export type LsStateMsg = {
+  lsState: LsState;
+};
 export type HandshakeRequestMsg = { handshakeRequest: HandshakeRequest };
 export type SetMsg = {
   set: { transactionId: number; key: string; value: Value };
@@ -91,12 +114,25 @@ export type SubMsg = {
 export type PSubMsg = {
   pSubscribe: PSubscribe;
 };
+export type UnsubMsg = {
+  unsubscribe: Unsubscribe;
+};
+export type LsMsg = {
+  ls: Ls;
+};
+export type SubscribeLsMsg = {
+  subscribeLs: SubscribeLs;
+};
+export type UnsubscribeLsMsg = {
+  unsubscribeLs: UnsubscribeLs;
+};
 export type ServerMessage =
   | AckMsg
   | StateMsg
   | PStateMsg
   | ErrMsg
-  | HandshakeMsg;
+  | HandshakeMsg
+  | LsStateMsg;
 export type ClientMessage =
   | HandshakeRequestMsg
   | SetMsg
@@ -106,7 +142,11 @@ export type ClientMessage =
   | DelMsg
   | PDelMsg
   | SubMsg
-  | PSubMsg;
+  | PSubMsg
+  | UnsubMsg
+  | LsMsg
+  | SubscribeLsMsg
+  | UnsubscribeLsMsg;
 
 export type Connection = {
   getValue: (key: Key) => Promise<Value>;
@@ -134,6 +174,9 @@ export type Connection = {
     unique?: boolean
   ) => SubscriptionID;
   unsubscribe: (subscriptionID: SubscriptionID) => void;
+  ls: (parent: string, callback?: LsCallback) => void;
+  subscribeLs: (parent: string, callback?: LsCallback) => SubscriptionID;
+  unsubscribeLs: (subscriptionID: SubscriptionID) => void;
   close: () => void;
   onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
@@ -171,6 +214,13 @@ export function connect(
       reject: (reason?: any) => void;
     }
   >();
+  const pendingLsPromises = new Map<
+    number,
+    {
+      resolve: (children: Children) => void;
+      reject: (reason?: any) => void;
+    }
+  >();
   const pendingPStatePromises = new Map<
     number,
     {
@@ -180,8 +230,10 @@ export function connect(
   >();
   const pendingStates = new Map<number, StateCallback>();
   const pendingPStates = new Map<number, PStateCallback>();
+  const pendingLsStates = new Map<number, LsCallback>();
   const subscriptionTransactionIDs = new Map<Key, TransactionID>();
   const psubscriptionTransactionIDs = new Map<RequestPattern, TransactionID>();
+  const lssubscriptionTransactionIDs = new Map<RequestPattern, TransactionID>();
   const subscriptionIDs = new Map<SubscriptionID, TransactionID>();
   const subscriptions = new Map<
     TransactionID,
@@ -190,6 +242,10 @@ export function connect(
   const psubscriptions = new Map<
     TransactionID,
     Map<SubscriptionID, PStateCallback>
+  >();
+  const lssubscriptions = new Map<
+    TransactionID,
+    Map<SubscriptionID, LsCallback>
   >();
   const cache = new Map<Key, Value>();
 
@@ -358,21 +414,87 @@ export function connect(
   };
 
   const unsubscribe = (subscriptionID: SubscriptionID) => {
-    const transactionID = subscriptionIDs.get(subscriptionID);
-    if (!transactionID) {
+    const transactionId = subscriptionIDs.get(subscriptionID);
+    if (!transactionId) {
       return;
     }
     subscriptionIDs.delete(subscriptionID);
 
-    const listeners = subscriptions.get(transactionID);
+    const listeners = subscriptions.get(transactionId);
     if (listeners) {
       listeners.delete(subscriptionID);
     }
 
-    const plisteners = psubscriptions.get(transactionID);
+    const plisteners = psubscriptions.get(transactionId);
     if (plisteners) {
       plisteners.delete(subscriptionID);
     }
+
+    const msg = {
+      unsubscribe: { transactionId },
+    };
+    const buf = encode_client_message(msg);
+    socket.send(buf);
+  };
+
+  const ls = (parent: string): Promise<Children> => {
+    const transactionId = nextTransactionId();
+    const msg = { ls: { transactionId, parent } };
+    const buf = encode_client_message(msg);
+    socket.send(buf);
+    return new Promise((resolve, reject) => {
+      pendingLsPromises.set(transactionId, { resolve, reject });
+    });
+  };
+
+  const subscribeLs = (
+    parent: string,
+    onmessage?: LsCallback
+  ): SubscriptionID => {
+    const subscriptionID = uuidv4();
+    const existingTransactionID = lssubscriptionTransactionIDs.get(parent);
+    if (existingTransactionID) {
+      subscriptionIDs.set(subscriptionID, existingTransactionID);
+      if (onmessage) {
+        const listeners = lssubscriptions.get(existingTransactionID);
+        listeners?.set(subscriptionID, onmessage);
+      }
+    } else {
+      const transactionId = nextTransactionId();
+      lssubscriptionTransactionIDs.set(parent, transactionId);
+      subscriptionIDs.set(subscriptionID, transactionId);
+      const msg = {
+        subscribeLs: { transactionId, parent },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        const listeners = new Map();
+        listeners.set(subscriptionID, onmessage);
+        lssubscriptions.set(transactionId, listeners);
+      }
+    }
+
+    return subscriptionID;
+  };
+
+  const unsubscribeLs = (subscriptionID: SubscriptionID) => {
+    const transactionId = subscriptionIDs.get(subscriptionID);
+    if (!transactionId) {
+      return;
+    }
+    subscriptionIDs.delete(subscriptionID);
+
+    const listeners = lssubscriptions.get(transactionId);
+    if (listeners) {
+      listeners.delete(subscriptionID);
+    }
+
+    const msg = {
+      unsubscribeLs: { transactionId },
+    };
+    const buf = encode_client_message(msg);
+    socket.send(buf);
   };
 
   const close = () => socket.close();
@@ -389,6 +511,9 @@ export function connect(
     subscribe,
     pSubscribe,
     unsubscribe,
+    ls,
+    subscribeLs,
+    unsubscribeLs,
     close,
     separator: "/",
     wildcard: "?",
@@ -403,7 +528,7 @@ export function connect(
     }
     const handshake = {
       handshakeRequest: {
-        supportedProtocolVersions: [{ major: 0, minor: 4 }],
+        supportedProtocolVersions: [{ major: 0, minor: 6 }],
         lastWill: lastWill || [],
         graveGoods: graveGoods || [],
       },
@@ -457,6 +582,31 @@ export function connect(
       }
 
       const subscription = subscriptions.get(transactionId);
+      if (subscription) {
+        subscription.forEach((onState) => onState(event));
+      }
+    }
+  };
+
+  const processLsStateMsg = (msg: LsStateMsg) => {
+    const { transactionId, children } = msg.lsState;
+
+    const pendingPromise = pendingLsPromises.get(transactionId);
+    if (pendingPromise) {
+      pendingLsPromises.delete(transactionId);
+      pendingPromise.resolve(children);
+    }
+
+    const event = { children };
+
+    if (event) {
+      const pending = pendingLsStates.get(transactionId);
+      if (pending) {
+        pendingLsStates.delete(transactionId);
+        pending(event);
+      }
+
+      const subscription = lssubscriptions.get(transactionId);
       if (subscription) {
         subscription.forEach((onState) => onState(event));
       }
@@ -542,6 +692,8 @@ export function connect(
       processErrMsg(<ErrMsg>msg);
     } else if ((<HandshakeMsg>msg).handshake) {
       processHandshakeMsg(<HandshakeMsg>msg);
+    } else if ((<LsStateMsg>msg).lsState) {
+      processLsStateMsg(<LsStateMsg>msg);
     }
   };
 
