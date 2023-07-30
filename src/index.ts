@@ -178,534 +178,531 @@ export type Connection = {
   subscribeLs: (parent: string, callback?: LsCallback) => SubscriptionID;
   unsubscribeLs: (subscriptionID: SubscriptionID) => void;
   close: () => void;
-  onopen?: (event: Event) => any;
   onclose?: (event: CloseEvent) => any;
   onerror?: (event: Err) => any;
   onwserror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   onhandshake?: (handshake: Handshake) => any;
-  separator: string;
-  wildcard: string;
-  multiWildcard: string;
 };
 
 export function connect(
   address: string,
   lastWill?: KeyValuePairs,
   graveGoods?: Key[]
-) {
-  console.log("Connecting to Worterbuch server " + address + " …");
+): Promise<Connection> {
+  return new Promise((res, rej) => {
+    console.log("Connecting to Worterbuch server " + address + " …");
 
-  const socket = new WebSocket(address);
+    const socket = new WebSocket(address);
 
-  const state = {
-    transactionId: 1,
-    connected: false,
-  };
+    const state = {
+      transactionId: 1,
+      connected: false,
+    };
 
-  const nextTransactionId = () => {
-    return state.transactionId++;
-  };
+    const nextTransactionId = () => {
+      return state.transactionId++;
+    };
 
-  const pendingStatePromises = new Map<
-    number,
-    {
-      resolve: (value: Value | undefined) => void;
-      reject: (reason?: any) => void;
-    }
-  >();
-  const pendingLsPromises = new Map<
-    number,
-    {
-      resolve: (children: Children) => void;
-      reject: (reason?: any) => void;
-    }
-  >();
-  const pendingPStatePromises = new Map<
-    number,
-    {
-      resolve: (value: Value | undefined) => void;
-      reject: (reason?: any) => void;
-    }
-  >();
-  const pendingStates = new Map<number, StateCallback>();
-  const pendingPStates = new Map<number, PStateCallback>();
-  const pendingLsStates = new Map<number, LsCallback>();
-  const subscriptionTransactionIDs = new Map<Key, TransactionID>();
-  const psubscriptionTransactionIDs = new Map<RequestPattern, TransactionID>();
-  const lssubscriptionTransactionIDs = new Map<RequestPattern, TransactionID>();
-  const subscriptionIDs = new Map<SubscriptionID, TransactionID>();
-  const subscriptions = new Map<
-    TransactionID,
-    Map<SubscriptionID, StateCallback>
-  >();
-  const psubscriptions = new Map<
-    TransactionID,
-    Map<SubscriptionID, PStateCallback>
-  >();
-  const lssubscriptions = new Map<
-    TransactionID,
-    Map<SubscriptionID, LsCallback>
-  >();
-  const cache = new Map<Key, Value>();
+    const pendingStatePromises = new Map<
+      number,
+      {
+        resolve: (value: Value | undefined) => void;
+        reject: (reason?: any) => void;
+      }
+    >();
+    const pendingLsPromises = new Map<
+      number,
+      {
+        resolve: (children: Children) => void;
+        reject: (reason?: any) => void;
+      }
+    >();
+    const pendingPStatePromises = new Map<
+      number,
+      {
+        resolve: (value: Value | undefined) => void;
+        reject: (reason?: any) => void;
+      }
+    >();
+    const pendingStates = new Map<number, StateCallback>();
+    const pendingPStates = new Map<number, PStateCallback>();
+    const pendingLsStates = new Map<number, LsCallback>();
+    const subscriptionTransactionIDs = new Map<Key, TransactionID>();
+    const psubscriptionTransactionIDs = new Map<
+      RequestPattern,
+      TransactionID
+    >();
+    const lssubscriptionTransactionIDs = new Map<
+      RequestPattern,
+      TransactionID
+    >();
+    const subscriptionIDs = new Map<SubscriptionID, TransactionID>();
+    const subscriptions = new Map<
+      TransactionID,
+      Map<SubscriptionID, StateCallback>
+    >();
+    const psubscriptions = new Map<
+      TransactionID,
+      Map<SubscriptionID, PStateCallback>
+    >();
+    const lssubscriptions = new Map<
+      TransactionID,
+      Map<SubscriptionID, LsCallback>
+    >();
+    const cache = new Map<Key, Value>();
 
-  const getValue = async (key: Key): Promise<Value> => {
-    const transactionId = nextTransactionId();
-    const msg = { get: { transactionId, key } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    return new Promise((resolve, reject) => {
-      pendingStatePromises.set(transactionId, { resolve, reject });
-    });
-  };
+    const getValue = async (key: Key): Promise<Value> => {
+      const transactionId = nextTransactionId();
+      const msg = { get: { transactionId, key } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      return new Promise((resolve, reject) => {
+        pendingStatePromises.set(transactionId, { resolve, reject });
+      });
+    };
 
-  const pGetValues = async (
-    requestPattern: RequestPattern
-  ): Promise<KeyValuePairs> => {
-    const transactionId = nextTransactionId();
-    const msg = { pGet: { transactionId, requestPattern } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    return new Promise((resolve, reject) => {
-      pendingPStatePromises.set(transactionId, { resolve, reject });
-    });
-  };
+    const pGetValues = async (
+      requestPattern: RequestPattern
+    ): Promise<KeyValuePairs> => {
+      const transactionId = nextTransactionId();
+      const msg = { pGet: { transactionId, requestPattern } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      return new Promise((resolve, reject) => {
+        pendingPStatePromises.set(transactionId, { resolve, reject });
+      });
+    };
 
-  const get = (key: Key, onmessage?: StateCallback): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { get: { transactionId, key } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      pendingStates.set(transactionId, onmessage);
-    }
-    return transactionId;
-  };
-
-  const pGet = (
-    requestPattern: RequestPattern,
-    onmessage?: PStateCallback
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { pGet: { transactionId, requestPattern } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      pendingPStates.set(transactionId, onmessage);
-    }
-    return transactionId;
-  };
-
-  const del = (key: Key, onmessage?: StateCallback): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { delete: { transactionId, key } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      pendingStates.set(transactionId, onmessage);
-    }
-    return transactionId;
-  };
-
-  const pDel = (
-    requestPattern: RequestPattern,
-    onmessage?: PStateCallback
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { pDelete: { transactionId, requestPattern } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (onmessage) {
-      pendingPStates.set(transactionId, onmessage);
-    }
-    return transactionId;
-  };
-
-  const set = (key: Key, value: Value): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { set: { transactionId, key, value } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    return transactionId;
-  };
-
-  const publish = (key: Key, value: Value): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { publish: { transactionId, key, value } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    return transactionId;
-  };
-
-  const subscribe = (
-    key: Key,
-    onmessage?: StateCallback,
-    unique?: boolean
-  ): SubscriptionID => {
-    const subscriptionID = uuidv4();
-    const existingTransactionID = subscriptionTransactionIDs.get(key);
-    if (existingTransactionID) {
-      subscriptionIDs.set(subscriptionID, existingTransactionID);
+    const get = (key: Key, onmessage?: StateCallback): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { get: { transactionId, key } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
       if (onmessage) {
-        const listeners = subscriptions.get(existingTransactionID);
-        listeners?.set(subscriptionID, onmessage);
-        const cached = cache.get(key);
-        if (cached) {
-          onmessage({ value: cached });
+        pendingStates.set(transactionId, onmessage);
+      }
+      return transactionId;
+    };
+
+    const pGet = (
+      requestPattern: RequestPattern,
+      onmessage?: PStateCallback
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { pGet: { transactionId, requestPattern } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        pendingPStates.set(transactionId, onmessage);
+      }
+      return transactionId;
+    };
+
+    const del = (key: Key, onmessage?: StateCallback): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { delete: { transactionId, key } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        pendingStates.set(transactionId, onmessage);
+      }
+      return transactionId;
+    };
+
+    const pDel = (
+      requestPattern: RequestPattern,
+      onmessage?: PStateCallback
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { pDelete: { transactionId, requestPattern } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        pendingPStates.set(transactionId, onmessage);
+      }
+      return transactionId;
+    };
+
+    const set = (key: Key, value: Value): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { set: { transactionId, key, value } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      return transactionId;
+    };
+
+    const publish = (key: Key, value: Value): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { publish: { transactionId, key, value } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      return transactionId;
+    };
+
+    const subscribe = (
+      key: Key,
+      onmessage?: StateCallback,
+      unique?: boolean
+    ): SubscriptionID => {
+      const subscriptionID = uuidv4();
+      const existingTransactionID = subscriptionTransactionIDs.get(key);
+      if (existingTransactionID) {
+        subscriptionIDs.set(subscriptionID, existingTransactionID);
+        if (onmessage) {
+          const listeners = subscriptions.get(existingTransactionID);
+          listeners?.set(subscriptionID, onmessage);
+          const cached = cache.get(key);
+          if (cached) {
+            onmessage({ value: cached });
+          }
+        }
+      } else {
+        const transactionId = nextTransactionId();
+        subscriptionTransactionIDs.set(key, transactionId);
+        subscriptionIDs.set(subscriptionID, transactionId);
+        const msg = {
+          subscribe: { transactionId, key, unique: unique || false },
+        };
+        const buf = encode_client_message(msg);
+        socket.send(buf);
+        if (onmessage) {
+          const listeners = new Map();
+          listeners.set(subscriptionID, onmessage);
+          subscriptions.set(transactionId, listeners);
         }
       }
-    } else {
-      const transactionId = nextTransactionId();
-      subscriptionTransactionIDs.set(key, transactionId);
-      subscriptionIDs.set(subscriptionID, transactionId);
+
+      return subscriptionID;
+    };
+
+    const pSubscribe = (
+      requestPattern: RequestPattern,
+      onmessage?: PStateCallback,
+      unique?: boolean
+    ): SubscriptionID => {
+      const subscriptionID = uuidv4();
+      const existingTransactionID =
+        psubscriptionTransactionIDs.get(requestPattern);
+      if (existingTransactionID) {
+        subscriptionIDs.set(subscriptionID, existingTransactionID);
+        if (onmessage) {
+          const listeners = psubscriptions.get(existingTransactionID);
+          listeners?.set(subscriptionID, onmessage);
+          const cached: KeyValuePairs = [];
+          cache.forEach((value, key) => {
+            if (matches(key, requestPattern, connection)) {
+              cached.push({ key, value });
+            }
+          });
+          onmessage({ keyValuePairs: cached });
+        }
+      } else {
+        const transactionId = nextTransactionId();
+        psubscriptionTransactionIDs.set(requestPattern, transactionId);
+        subscriptionIDs.set(subscriptionID, transactionId);
+        const msg = {
+          pSubscribe: {
+            transactionId,
+            requestPattern,
+            unique: unique || false,
+          },
+        };
+        const buf = encode_client_message(msg);
+        socket.send(buf);
+        if (onmessage) {
+          const listeners = new Map();
+          listeners.set(subscriptionID, onmessage);
+          psubscriptions.set(transactionId, listeners);
+        }
+      }
+
+      return subscriptionID;
+    };
+
+    const unsubscribe = (subscriptionID: SubscriptionID) => {
+      const transactionId = subscriptionIDs.get(subscriptionID);
+      if (!transactionId) {
+        return;
+      }
+      subscriptionIDs.delete(subscriptionID);
+
+      const listeners = subscriptions.get(transactionId);
+      if (listeners) {
+        listeners.delete(subscriptionID);
+      }
+
+      const plisteners = psubscriptions.get(transactionId);
+      if (plisteners) {
+        plisteners.delete(subscriptionID);
+      }
+
       const msg = {
-        subscribe: { transactionId, key, unique: unique || false },
+        unsubscribe: { transactionId },
       };
       const buf = encode_client_message(msg);
       socket.send(buf);
-      if (onmessage) {
-        const listeners = new Map();
-        listeners.set(subscriptionID, onmessage);
-        subscriptions.set(transactionId, listeners);
-      }
-    }
+    };
 
-    return subscriptionID;
-  };
-
-  const pSubscribe = (
-    requestPattern: RequestPattern,
-    onmessage?: PStateCallback,
-    unique?: boolean
-  ): SubscriptionID => {
-    const subscriptionID = uuidv4();
-    const existingTransactionID =
-      psubscriptionTransactionIDs.get(requestPattern);
-    if (existingTransactionID) {
-      subscriptionIDs.set(subscriptionID, existingTransactionID);
-      if (onmessage) {
-        const listeners = psubscriptions.get(existingTransactionID);
-        listeners?.set(subscriptionID, onmessage);
-        const cached: KeyValuePairs = [];
-        cache.forEach((value, key) => {
-          if (matches(key, requestPattern, connection)) {
-            cached.push({ key, value });
-          }
-        });
-        onmessage({ keyValuePairs: cached });
-      }
-    } else {
+    const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
       const transactionId = nextTransactionId();
-      psubscriptionTransactionIDs.set(requestPattern, transactionId);
-      subscriptionIDs.set(subscriptionID, transactionId);
+      const msg = { ls: { transactionId, parent } };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (callback) {
+        pendingLsStates.set(transactionId, callback);
+      }
+      return new Promise((resolve, reject) => {
+        pendingLsPromises.set(transactionId, { resolve, reject });
+      });
+    };
+
+    const subscribeLs = (
+      parent: string,
+      onmessage?: LsCallback
+    ): SubscriptionID => {
+      const subscriptionID = uuidv4();
+      const existingTransactionID = lssubscriptionTransactionIDs.get(parent);
+      if (existingTransactionID) {
+        subscriptionIDs.set(subscriptionID, existingTransactionID);
+        if (onmessage) {
+          const listeners = lssubscriptions.get(existingTransactionID);
+          listeners?.set(subscriptionID, onmessage);
+        }
+      } else {
+        const transactionId = nextTransactionId();
+        lssubscriptionTransactionIDs.set(parent, transactionId);
+        subscriptionIDs.set(subscriptionID, transactionId);
+        const msg = {
+          subscribeLs: { transactionId, parent },
+        };
+        const buf = encode_client_message(msg);
+        socket.send(buf);
+        if (onmessage) {
+          const listeners = new Map();
+          listeners.set(subscriptionID, onmessage);
+          lssubscriptions.set(transactionId, listeners);
+        }
+      }
+
+      return subscriptionID;
+    };
+
+    const unsubscribeLs = (subscriptionID: SubscriptionID) => {
+      const transactionId = subscriptionIDs.get(subscriptionID);
+      if (!transactionId) {
+        return;
+      }
+      subscriptionIDs.delete(subscriptionID);
+
+      const listeners = lssubscriptions.get(transactionId);
+      if (listeners) {
+        listeners.delete(subscriptionID);
+      }
+
       const msg = {
-        pSubscribe: { transactionId, requestPattern, unique: unique || false },
+        unsubscribeLs: { transactionId },
       };
       const buf = encode_client_message(msg);
       socket.send(buf);
-      if (onmessage) {
-        const listeners = new Map();
-        listeners.set(subscriptionID, onmessage);
-        psubscriptions.set(transactionId, listeners);
-      }
-    }
-
-    return subscriptionID;
-  };
-
-  const unsubscribe = (subscriptionID: SubscriptionID) => {
-    const transactionId = subscriptionIDs.get(subscriptionID);
-    if (!transactionId) {
-      return;
-    }
-    subscriptionIDs.delete(subscriptionID);
-
-    const listeners = subscriptions.get(transactionId);
-    if (listeners) {
-      listeners.delete(subscriptionID);
-    }
-
-    const plisteners = psubscriptions.get(transactionId);
-    if (plisteners) {
-      plisteners.delete(subscriptionID);
-    }
-
-    const msg = {
-      unsubscribe: { transactionId },
     };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-  };
 
-  const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
-    const transactionId = nextTransactionId();
-    const msg = { ls: { transactionId, parent } };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    if (callback) {
-      pendingLsStates.set(transactionId, callback);
-    }
-    return new Promise((resolve, reject) => {
-      pendingLsPromises.set(transactionId, { resolve, reject });
-    });
-  };
+    const close = () => socket.close();
 
-  const subscribeLs = (
-    parent: string,
-    onmessage?: LsCallback
-  ): SubscriptionID => {
-    const subscriptionID = uuidv4();
-    const existingTransactionID = lssubscriptionTransactionIDs.get(parent);
-    if (existingTransactionID) {
-      subscriptionIDs.set(subscriptionID, existingTransactionID);
-      if (onmessage) {
-        const listeners = lssubscriptions.get(existingTransactionID);
-        listeners?.set(subscriptionID, onmessage);
-      }
-    } else {
-      const transactionId = nextTransactionId();
-      lssubscriptionTransactionIDs.set(parent, transactionId);
-      subscriptionIDs.set(subscriptionID, transactionId);
-      const msg = {
-        subscribeLs: { transactionId, parent },
+    const connection: Connection = {
+      getValue,
+      pGetValues,
+      get,
+      pGet,
+      del,
+      pDel,
+      set,
+      publish,
+      subscribe,
+      pSubscribe,
+      unsubscribe,
+      ls,
+      subscribeLs,
+      unsubscribeLs,
+      close,
+    };
+
+    socket.onopen = (e: Event) => {
+      console.log("Connected to server.");
+      state.connected = true;
+      const handshake = {
+        handshakeRequest: {
+          supportedProtocolVersions: [{ major: 0, minor: 6 }],
+          lastWill: lastWill || [],
+          graveGoods: graveGoods || [],
+        },
       };
-      const buf = encode_client_message(msg);
+      const buf = encode_client_message(handshake);
       socket.send(buf);
-      if (onmessage) {
-        const listeners = new Map();
-        listeners.set(subscriptionID, onmessage);
-        lssubscriptions.set(transactionId, listeners);
-      }
-    }
-
-    return subscriptionID;
-  };
-
-  const unsubscribeLs = (subscriptionID: SubscriptionID) => {
-    const transactionId = subscriptionIDs.get(subscriptionID);
-    if (!transactionId) {
-      return;
-    }
-    subscriptionIDs.delete(subscriptionID);
-
-    const listeners = lssubscriptions.get(transactionId);
-    if (listeners) {
-      listeners.delete(subscriptionID);
-    }
-
-    const msg = {
-      unsubscribeLs: { transactionId },
     };
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-  };
 
-  const close = () => socket.close();
-
-  const connection: Connection = {
-    getValue,
-    pGetValues,
-    get,
-    pGet,
-    del,
-    pDel,
-    set,
-    publish,
-    subscribe,
-    pSubscribe,
-    unsubscribe,
-    ls,
-    subscribeLs,
-    unsubscribeLs,
-    close,
-    separator: "/",
-    wildcard: "?",
-    multiWildcard: "#",
-  };
-
-  socket.onopen = (e: Event) => {
-    console.log("Connected to server.");
-    state.connected = true;
-    if (connection.onopen) {
-      connection.onopen(e);
-    }
-    const handshake = {
-      handshakeRequest: {
-        supportedProtocolVersions: [{ major: 0, minor: 6 }],
-        lastWill: lastWill || [],
-        graveGoods: graveGoods || [],
-      },
+    socket.onclose = (e: CloseEvent) => {
+      console.log("Connection to server closed.");
+      rej(e);
+      state.connected = false;
+      if (connection.onclose) {
+        connection.onclose(e);
+      }
     };
-    const buf = encode_client_message(handshake);
-    socket.send(buf);
-  };
 
-  socket.onclose = (e: CloseEvent) => {
-    console.log("Connection to server closed.");
-    state.connected = false;
-    if (connection.onclose) {
-      connection.onclose(e);
-    }
-  };
+    socket.onerror = (e: Event) => {
+      rej(e);
+      if (connection.onwserror) {
+        connection.onwserror(e);
+      }
+    };
 
-  socket.onerror = (e: Event) => {
-    if (connection.onwserror) {
-      connection.onwserror(e);
-    }
-  };
+    const processStateMsg = (msg: StateMsg) => {
+      const { transactionId, keyValue, deleted } = msg.state;
 
-  const processStateMsg = (msg: StateMsg) => {
-    const { transactionId, keyValue, deleted } = msg.state;
-
-    if (keyValue) {
-      cache.set(keyValue.key, keyValue.value);
-    }
-
-    if (deleted) {
-      cache.delete(deleted.key);
-    }
-
-    const pendingPromise = pendingStatePromises.get(transactionId);
-    if (pendingPromise) {
-      pendingStatePromises.delete(transactionId);
-      pendingPromise.resolve(keyValue?.value);
-    }
-
-    const event = keyValue
-      ? { value: keyValue.value }
-      : deleted
-      ? { deleted: deleted.value }
-      : undefined;
-
-    if (event) {
-      const pending = pendingStates.get(transactionId);
-      if (pending) {
-        pendingStates.delete(transactionId);
-        pending(event);
+      if (keyValue) {
+        cache.set(keyValue.key, keyValue.value);
       }
 
-      const subscription = subscriptions.get(transactionId);
-      if (subscription) {
-        subscription.forEach((onState) => onState(event));
-      }
-    }
-  };
-
-  const processLsStateMsg = (msg: LsStateMsg) => {
-    const { transactionId, children } = msg.lsState;
-
-    const pendingPromise = pendingLsPromises.get(transactionId);
-    if (pendingPromise) {
-      pendingLsPromises.delete(transactionId);
-      pendingPromise.resolve(children);
-    }
-
-    const event = { children };
-
-    if (event) {
-      const pending = pendingLsStates.get(transactionId);
-      if (pending) {
-        pendingLsStates.delete(transactionId);
-        pending(event);
+      if (deleted) {
+        cache.delete(deleted.key);
       }
 
-      const subscription = lssubscriptions.get(transactionId);
-      if (subscription) {
-        subscription.forEach((onState) => onState(event));
-      }
-    }
-  };
-
-  const processPStateMsg = (msg: PStateMsg) => {
-    const transactionId = msg.pState.transactionId;
-    const keyValuePairs = msg.pState.keyValuePairs;
-    const deleted = msg.pState.deleted;
-
-    if (keyValuePairs) {
-      keyValuePairs.forEach(({ key, value }) => cache.set(key, value));
-    }
-
-    if (deleted) {
-      deleted.forEach(({ key }) => cache.delete(key));
-    }
-
-    const pendingPromise = pendingPStatePromises.get(transactionId);
-    if (pendingPromise) {
-      pendingPStatePromises.delete(transactionId);
-      pendingPromise.resolve(keyValuePairs);
-    }
-
-    const event = keyValuePairs
-      ? { keyValuePairs }
-      : deleted
-      ? { deleted }
-      : undefined;
-
-    if (event) {
-      const pending = pendingPStates.get(transactionId);
-      if (pending) {
-        pendingPStates.delete(transactionId);
-        pending(event);
+      const pendingPromise = pendingStatePromises.get(transactionId);
+      if (pendingPromise) {
+        pendingStatePromises.delete(transactionId);
+        pendingPromise.resolve(keyValue?.value);
       }
 
-      const subscription = psubscriptions.get(transactionId);
-      if (subscription) {
-        subscription.forEach((onPState) => onPState(event));
+      const event = keyValue
+        ? { value: keyValue.value }
+        : deleted
+        ? { deleted: deleted.value }
+        : undefined;
+
+      if (event) {
+        const pending = pendingStates.get(transactionId);
+        if (pending) {
+          pendingStates.delete(transactionId);
+          pending(event);
+        }
+
+        const subscription = subscriptions.get(transactionId);
+        if (subscription) {
+          subscription.forEach((onState) => onState(event));
+        }
       }
-    }
-  };
+    };
 
-  const processErrMsg = (msg: ErrMsg) => {
-    const transactionId = msg.err.transactionId;
-    const pendingStatePromise = pendingStatePromises.get(transactionId);
-    if (pendingStatePromise) {
-      pendingStatePromises.delete(transactionId);
-      pendingStatePromise.reject(msg.err);
-    }
-    const pendingPStatePromise = pendingPStatePromises.get(transactionId);
-    if (pendingPStatePromise) {
-      pendingPStatePromises.delete(transactionId);
-      pendingPStatePromise.reject(msg.err);
-    }
-    if (connection.onerror) {
-      connection.onerror(msg.err);
-    }
-  };
+    const processLsStateMsg = (msg: LsStateMsg) => {
+      const { transactionId, children } = msg.lsState;
 
-  const processHandshakeMsg = (msg: HandshakeMsg) => {
-    if (connection.onhandshake) {
-      connection.separator = msg.handshake.separator;
-      connection.wildcard = msg.handshake.wildcard;
-      connection.multiWildcard = msg.handshake.multiWildcard;
-      connection.onhandshake(msg.handshake);
-    }
-  };
+      const pendingPromise = pendingLsPromises.get(transactionId);
+      if (pendingPromise) {
+        pendingLsPromises.delete(transactionId);
+        pendingPromise.resolve(children);
+      }
 
-  socket.onmessage = async (e: MessageEvent) => {
-    const msg: ServerMessage = decode_server_message(e.data);
+      const event = { children };
 
-    if (connection.onmessage) {
-      connection.onmessage(msg);
-    }
-    if ((<StateMsg>msg).state) {
-      processStateMsg(<StateMsg>msg);
-    } else if ((<PStateMsg>msg).pState) {
-      processPStateMsg(<PStateMsg>msg);
-    } else if ((<ErrMsg>msg).err) {
-      processErrMsg(<ErrMsg>msg);
-    } else if ((<HandshakeMsg>msg).handshake) {
-      processHandshakeMsg(<HandshakeMsg>msg);
-    } else if ((<LsStateMsg>msg).lsState) {
-      processLsStateMsg(<LsStateMsg>msg);
-    }
-  };
+      if (event) {
+        const pending = pendingLsStates.get(transactionId);
+        if (pending) {
+          pendingLsStates.delete(transactionId);
+          pending(event);
+        }
 
-  return connection;
+        const subscription = lssubscriptions.get(transactionId);
+        if (subscription) {
+          subscription.forEach((onState) => onState(event));
+        }
+      }
+    };
+
+    const processPStateMsg = (msg: PStateMsg) => {
+      const transactionId = msg.pState.transactionId;
+      const keyValuePairs = msg.pState.keyValuePairs;
+      const deleted = msg.pState.deleted;
+
+      if (keyValuePairs) {
+        keyValuePairs.forEach(({ key, value }) => cache.set(key, value));
+      }
+
+      if (deleted) {
+        deleted.forEach(({ key }) => cache.delete(key));
+      }
+
+      const pendingPromise = pendingPStatePromises.get(transactionId);
+      if (pendingPromise) {
+        pendingPStatePromises.delete(transactionId);
+        pendingPromise.resolve(keyValuePairs);
+      }
+
+      const event = keyValuePairs
+        ? { keyValuePairs }
+        : deleted
+        ? { deleted }
+        : undefined;
+
+      if (event) {
+        const pending = pendingPStates.get(transactionId);
+        if (pending) {
+          pendingPStates.delete(transactionId);
+          pending(event);
+        }
+
+        const subscription = psubscriptions.get(transactionId);
+        if (subscription) {
+          subscription.forEach((onPState) => onPState(event));
+        }
+      }
+    };
+
+    const processErrMsg = (msg: ErrMsg) => {
+      const transactionId = msg.err.transactionId;
+      const pendingStatePromise = pendingStatePromises.get(transactionId);
+      if (pendingStatePromise) {
+        pendingStatePromises.delete(transactionId);
+        pendingStatePromise.reject(msg.err);
+      }
+      const pendingPStatePromise = pendingPStatePromises.get(transactionId);
+      if (pendingPStatePromise) {
+        pendingPStatePromises.delete(transactionId);
+        pendingPStatePromise.reject(msg.err);
+      }
+      if (connection.onerror) {
+        connection.onerror(msg.err);
+      }
+    };
+
+    const processHandshakeMsg = (msg: HandshakeMsg) => {
+      res(connection);
+    };
+
+    socket.onmessage = async (e: MessageEvent) => {
+      const msg: ServerMessage = decode_server_message(e.data);
+
+      if (connection.onmessage) {
+        connection.onmessage(msg);
+      }
+      if ((<StateMsg>msg).state) {
+        processStateMsg(<StateMsg>msg);
+      } else if ((<PStateMsg>msg).pState) {
+        processPStateMsg(<PStateMsg>msg);
+      } else if ((<ErrMsg>msg).err) {
+        processErrMsg(<ErrMsg>msg);
+      } else if ((<HandshakeMsg>msg).handshake) {
+        processHandshakeMsg(<HandshakeMsg>msg);
+      } else if ((<LsStateMsg>msg).lsState) {
+        processLsStateMsg(<LsStateMsg>msg);
+      }
+    };
+  });
 }
 
 function matches(key: string, pattern: string, connection: Connection) {
-  const keySplit = key.split(connection.separator);
-  const patternSplit = pattern.split(connection.separator);
+  const keySplit = key.split("/");
+  const patternSplit = pattern.split("/");
 
   if (patternSplit.length > keySplit.length) {
     return false;
@@ -713,16 +710,16 @@ function matches(key: string, pattern: string, connection: Connection) {
 
   if (
     keySplit.length > patternSplit.length &&
-    patternSplit[patternSplit.length - 1] !== connection.multiWildcard
+    patternSplit[patternSplit.length - 1] !== "#"
   ) {
     return false;
   }
 
   for (let i = 0; i < patternSplit.length; i++) {
-    if (patternSplit[i] === connection.wildcard) {
+    if (patternSplit[i] === "?") {
       continue;
     }
-    if (patternSplit[i] === connection.multiWildcard) {
+    if (patternSplit[i] === "#") {
       return i === patternSplit.length - 1;
     }
     if (patternSplit[i] !== keySplit[i]) {

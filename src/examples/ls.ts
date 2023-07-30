@@ -1,8 +1,8 @@
 import { connect } from "../index";
 
-const wb = connect("ws://localhost:8080/ws");
+connect("ws://localhost:8080/ws").then(async (wb) => {
+  wb.onclose = () => console.log("connection closed");
 
-wb.onhandshake = async () => {
   wb.set("hello/there", 123);
   wb.set("hello/world", 123);
   wb.set("hello/you", 123);
@@ -15,4 +15,4 @@ wb.onhandshake = async () => {
   console.log(children);
 
   wb.close();
-};
+});

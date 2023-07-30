@@ -1,8 +1,6 @@
 import { connect } from "../index";
 
-const wb = connect("ws://localhost:8080/ws");
-
-wb.onhandshake = async () => {
+const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
   wb.pDel("hello/#");
 
   let sid = wb.subscribeLs("hello", console.log);
@@ -21,4 +19,4 @@ wb.onhandshake = async () => {
   await new Promise((r) => setTimeout(r, 1000));
 
   wb.close();
-};
+});
