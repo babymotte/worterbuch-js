@@ -2,7 +2,7 @@ import { connect } from "../index";
 
 const wb = connect("ws://localhost:8080/ws");
 
-wb.onopen = async () => {
+wb.onhandshake = async () => {
   wb.pDel("hello/#");
 
   let sid = wb.subscribeLs("hello", console.log);

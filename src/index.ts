@@ -437,11 +437,14 @@ export function connect(
     socket.send(buf);
   };
 
-  const ls = (parent: string): Promise<Children> => {
+  const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
     const transactionId = nextTransactionId();
     const msg = { ls: { transactionId, parent } };
     const buf = encode_client_message(msg);
     socket.send(buf);
+    if (callback) {
+      pendingLsStates.set(transactionId, callback);
+    }
     return new Promise((resolve, reject) => {
       pendingLsPromises.set(transactionId, { resolve, reject });
     });
