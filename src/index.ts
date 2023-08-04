@@ -7,7 +7,6 @@ export type RequestPatterns = RequestPattern[];
 export type Value = any;
 export type Children = string[];
 export type TransactionID = number;
-export type SubscriptionID = string;
 export type KeyValuePair = { key: Key; value: Value };
 export type KeyValuePairs = KeyValuePair[];
 export type ProtocolVersion = { major: number; minor: number };
@@ -21,9 +20,21 @@ export type PStateEvent = {
 export type LsEvent = {
   children: Children;
 };
-export type StateCallback = (event: StateEvent) => void;
-export type PStateCallback = (event: PStateEvent) => void;
-export type LsCallback = (event: LsEvent) => void;
+export type StateCallback = (event: StateEvent, live: boolean) => void;
+export type PStateCallback = (event: PStateEvent, live: boolean) => void;
+export type LsCallback = (event: LsEvent, live: boolean) => void;
+type HistoryStateCallback = {
+  callback: StateCallback;
+  live: boolean;
+};
+type HistoryPStateCallback = {
+  callback: PStateCallback;
+  live: boolean;
+};
+type HistoryLsCallback = {
+  callback: LsCallback;
+  live: boolean;
+};
 export type Ack = { transactionId: TransactionID };
 export type State = {
   transactionId: TransactionID;
@@ -167,16 +178,16 @@ export type Connection = {
     key: Key,
     callback?: StateCallback,
     unique?: boolean
-  ) => SubscriptionID;
+  ) => TransactionID;
   pSubscribe: (
     requestPattern: RequestPattern,
     callback?: PStateCallback,
     unique?: boolean
-  ) => SubscriptionID;
-  unsubscribe: (subscriptionID: SubscriptionID) => void;
+  ) => TransactionID;
+  unsubscribe: (transactionID: TransactionID) => void;
   ls: (parent: string, callback?: LsCallback) => void;
-  subscribeLs: (parent: string, callback?: LsCallback) => SubscriptionID;
-  unsubscribeLs: (subscriptionID: SubscriptionID) => void;
+  subscribeLs: (parent: string, callback?: LsCallback) => TransactionID;
+  unsubscribeLs: (transactionID: TransactionID) => void;
   close: () => void;
   onclose?: (event: CloseEvent) => any;
   onerror?: (event: Err) => any;
@@ -205,52 +216,32 @@ export function connect(
     };
 
     const pendingStatePromises = new Map<
-      number,
+      TransactionID,
       {
         resolve: (value: Value | undefined) => void;
         reject: (reason?: any) => void;
       }
     >();
     const pendingLsPromises = new Map<
-      number,
+      TransactionID,
       {
         resolve: (children: Children) => void;
         reject: (reason?: any) => void;
       }
     >();
     const pendingPStatePromises = new Map<
-      number,
+      TransactionID,
       {
         resolve: (value: Value | undefined) => void;
         reject: (reason?: any) => void;
       }
     >();
-    const pendingStates = new Map<number, StateCallback>();
-    const pendingPStates = new Map<number, PStateCallback>();
-    const pendingLsStates = new Map<number, LsCallback>();
-    const subscriptionTransactionIDs = new Map<Key, TransactionID>();
-    const psubscriptionTransactionIDs = new Map<
-      RequestPattern,
-      TransactionID
-    >();
-    const lssubscriptionTransactionIDs = new Map<
-      RequestPattern,
-      TransactionID
-    >();
-    const subscriptionIDs = new Map<SubscriptionID, TransactionID>();
-    const subscriptions = new Map<
-      TransactionID,
-      Map<SubscriptionID, StateCallback>
-    >();
-    const psubscriptions = new Map<
-      TransactionID,
-      Map<SubscriptionID, PStateCallback>
-    >();
-    const lssubscriptions = new Map<
-      TransactionID,
-      Map<SubscriptionID, LsCallback>
-    >();
-    const cache = new Map<Key, Value>();
+    const pendingStates = new Map<TransactionID, StateCallback>();
+    const pendingPStates = new Map<TransactionID, PStateCallback>();
+    const pendingLsStates = new Map<TransactionID, LsCallback>();
+    const subscriptions = new Map<TransactionID, HistoryStateCallback>();
+    const psubscriptions = new Map<TransactionID, HistoryPStateCallback>();
+    const lssubscriptions = new Map<TransactionID, HistoryLsCallback>();
 
     const getValue = async (key: Key): Promise<Value> => {
       const transactionId = nextTransactionId();
@@ -344,98 +335,57 @@ export function connect(
       key: Key,
       onmessage?: StateCallback,
       unique?: boolean
-    ): SubscriptionID => {
-      const subscriptionID = uuidv4();
-      const existingTransactionID = subscriptionTransactionIDs.get(key);
-      if (existingTransactionID) {
-        subscriptionIDs.set(subscriptionID, existingTransactionID);
-        if (onmessage) {
-          const listeners = subscriptions.get(existingTransactionID);
-          listeners?.set(subscriptionID, onmessage);
-          const cached = cache.get(key);
-          if (cached) {
-            onmessage({ value: cached });
-          }
-        }
-      } else {
-        const transactionId = nextTransactionId();
-        subscriptionTransactionIDs.set(key, transactionId);
-        subscriptionIDs.set(subscriptionID, transactionId);
-        const msg = {
-          subscribe: { transactionId, key, unique: unique || false },
-        };
-        const buf = encode_client_message(msg);
-        socket.send(buf);
-        if (onmessage) {
-          const listeners = new Map();
-          listeners.set(subscriptionID, onmessage);
-          subscriptions.set(transactionId, listeners);
-        }
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        subscribe: { transactionId, key, unique: unique || false },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        subscriptions.set(transactionId, {
+          callback: onmessage,
+          live: false,
+        });
       }
 
-      return subscriptionID;
+      return transactionId;
     };
 
     const pSubscribe = (
       requestPattern: RequestPattern,
       onmessage?: PStateCallback,
       unique?: boolean
-    ): SubscriptionID => {
-      const subscriptionID = uuidv4();
-      const existingTransactionID =
-        psubscriptionTransactionIDs.get(requestPattern);
-      if (existingTransactionID) {
-        subscriptionIDs.set(subscriptionID, existingTransactionID);
-        if (onmessage) {
-          const listeners = psubscriptions.get(existingTransactionID);
-          listeners?.set(subscriptionID, onmessage);
-          const cached: KeyValuePairs = [];
-          cache.forEach((value, key) => {
-            if (matches(key, requestPattern, connection)) {
-              cached.push({ key, value });
-            }
-          });
-          onmessage({ keyValuePairs: cached });
-        }
-      } else {
-        const transactionId = nextTransactionId();
-        psubscriptionTransactionIDs.set(requestPattern, transactionId);
-        subscriptionIDs.set(subscriptionID, transactionId);
-        const msg = {
-          pSubscribe: {
-            transactionId,
-            requestPattern,
-            unique: unique || false,
-          },
-        };
-        const buf = encode_client_message(msg);
-        socket.send(buf);
-        if (onmessage) {
-          const listeners = new Map();
-          listeners.set(subscriptionID, onmessage);
-          psubscriptions.set(transactionId, listeners);
-        }
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        pSubscribe: {
+          transactionId,
+          requestPattern,
+          unique: unique || false,
+        },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        psubscriptions.set(transactionId, {
+          callback: onmessage,
+          live: false,
+        });
       }
 
-      return subscriptionID;
+      return transactionId;
     };
 
-    const unsubscribe = (subscriptionID: SubscriptionID) => {
-      const transactionId = subscriptionIDs.get(subscriptionID);
-      if (!transactionId) {
-        return;
-      }
-      subscriptionIDs.delete(subscriptionID);
+    const unsubscribe = (transactionId: TransactionID) => {
+      subscriptions.delete(transactionId);
+      psubscriptions.delete(transactionId);
 
-      const listeners = subscriptions.get(transactionId);
-      if (listeners) {
-        listeners.delete(subscriptionID);
-      }
-
-      const plisteners = psubscriptions.get(transactionId);
-      if (plisteners) {
-        plisteners.delete(subscriptionID);
-      }
+      const msg = {
+        unsubscribe: { transactionId },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
     };
 
     const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
@@ -454,45 +404,31 @@ export function connect(
     const subscribeLs = (
       parent: string,
       onmessage?: LsCallback
-    ): SubscriptionID => {
-      const subscriptionID = uuidv4();
-      const existingTransactionID = lssubscriptionTransactionIDs.get(parent);
-      if (existingTransactionID) {
-        subscriptionIDs.set(subscriptionID, existingTransactionID);
-        if (onmessage) {
-          const listeners = lssubscriptions.get(existingTransactionID);
-          listeners?.set(subscriptionID, onmessage);
-        }
-      } else {
-        const transactionId = nextTransactionId();
-        lssubscriptionTransactionIDs.set(parent, transactionId);
-        subscriptionIDs.set(subscriptionID, transactionId);
-        const msg = {
-          subscribeLs: { transactionId, parent },
-        };
-        const buf = encode_client_message(msg);
-        socket.send(buf);
-        if (onmessage) {
-          const listeners = new Map();
-          listeners.set(subscriptionID, onmessage);
-          lssubscriptions.set(transactionId, listeners);
-        }
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        subscribeLs: { transactionId, parent },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      if (onmessage) {
+        lssubscriptions.set(transactionId, {
+          callback: onmessage,
+          live: false,
+        });
       }
 
-      return subscriptionID;
+      return transactionId;
     };
 
-    const unsubscribeLs = (subscriptionID: SubscriptionID) => {
-      const transactionId = subscriptionIDs.get(subscriptionID);
-      if (!transactionId) {
-        return;
-      }
-      subscriptionIDs.delete(subscriptionID);
+    const unsubscribeLs = (transactionId: TransactionID) => {
+      lssubscriptions.delete(transactionId);
 
-      const listeners = lssubscriptions.get(transactionId);
-      if (listeners) {
-        listeners.delete(subscriptionID);
-      }
+      const msg = {
+        unsubscribeLs: { transactionId },
+      };
+      const buf = encode_client_message(msg);
+      socket.send(buf);
     };
 
     const close = () => socket.close();
@@ -548,14 +484,6 @@ export function connect(
     const processStateMsg = (msg: StateMsg) => {
       const { transactionId, keyValue, deleted } = msg.state;
 
-      if (keyValue) {
-        cache.set(keyValue.key, keyValue.value);
-      }
-
-      if (deleted) {
-        cache.delete(deleted.key);
-      }
-
       const pendingPromise = pendingStatePromises.get(transactionId);
       if (pendingPromise) {
         pendingStatePromises.delete(transactionId);
@@ -572,12 +500,13 @@ export function connect(
         const pending = pendingStates.get(transactionId);
         if (pending) {
           pendingStates.delete(transactionId);
-          pending(event);
+          pending(event, true);
         }
 
         const subscription = subscriptions.get(transactionId);
         if (subscription) {
-          subscription.forEach((onState) => onState(event));
+          subscription.callback(event, subscription.live);
+          subscription.live = true;
         }
       }
     };
@@ -597,12 +526,13 @@ export function connect(
         const pending = pendingLsStates.get(transactionId);
         if (pending) {
           pendingLsStates.delete(transactionId);
-          pending(event);
+          pending(event, true);
         }
 
         const subscription = lssubscriptions.get(transactionId);
         if (subscription) {
-          subscription.forEach((onState) => onState(event));
+          subscription.callback(event, subscription.live);
+          subscription.live = true;
         }
       }
     };
@@ -611,14 +541,6 @@ export function connect(
       const transactionId = msg.pState.transactionId;
       const keyValuePairs = msg.pState.keyValuePairs;
       const deleted = msg.pState.deleted;
-
-      if (keyValuePairs) {
-        keyValuePairs.forEach(({ key, value }) => cache.set(key, value));
-      }
-
-      if (deleted) {
-        deleted.forEach(({ key }) => cache.delete(key));
-      }
 
       const pendingPromise = pendingPStatePromises.get(transactionId);
       if (pendingPromise) {
@@ -636,12 +558,13 @@ export function connect(
         const pending = pendingPStates.get(transactionId);
         if (pending) {
           pendingPStates.delete(transactionId);
-          pending(event);
+          pending(event, true);
         }
 
         const subscription = psubscriptions.get(transactionId);
         if (subscription) {
-          subscription.forEach((onPState) => onPState(event));
+          subscription.callback(event, subscription.live);
+          subscription.live = true;
         }
       }
     };
