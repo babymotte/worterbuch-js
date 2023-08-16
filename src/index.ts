@@ -24,21 +24,9 @@ export type PStateEvent = {
 export type LsEvent = {
   children: Children;
 };
-export type StateCallback = (event: StateEvent, live: boolean) => void;
-export type PStateCallback = (event: PStateEvent, live: boolean) => void;
-export type LsCallback = (event: LsEvent, live: boolean) => void;
-type HistoryStateCallback = {
-  callback: StateCallback;
-  live: boolean;
-};
-type HistoryPStateCallback = {
-  callback: PStateCallback;
-  live: boolean;
-};
-type HistoryLsCallback = {
-  callback: LsCallback;
-  live: boolean;
-};
+export type StateCallback = (event: StateEvent) => void;
+export type PStateCallback = (event: PStateEvent) => void;
+export type LsCallback = (event: LsEvent) => void;
 export type Ack = { transactionId: TransactionID };
 export type State = {
   transactionId: TransactionID;
@@ -243,15 +231,14 @@ export function connect(
     const pendingStates = new Map<TransactionID, StateCallback>();
     const pendingPStates = new Map<TransactionID, PStateCallback>();
     const pendingLsStates = new Map<TransactionID, LsCallback>();
-    const subscriptions = new Map<TransactionID, HistoryStateCallback>();
-    const psubscriptions = new Map<TransactionID, HistoryPStateCallback>();
-    const lssubscriptions = new Map<TransactionID, HistoryLsCallback>();
+    const subscriptions = new Map<TransactionID, StateCallback>();
+    const psubscriptions = new Map<TransactionID, PStateCallback>();
+    const lssubscriptions = new Map<TransactionID, LsCallback>();
 
     const getValue = async (key: Key): Promise<Value> => {
       const transactionId = nextTransactionId();
       const msg = { get: { transactionId, key } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       return new Promise((resolve, reject) => {
         pendingStatePromises.set(transactionId, { resolve, reject });
       });
@@ -262,8 +249,7 @@ export function connect(
     ): Promise<KeyValuePairs> => {
       const transactionId = nextTransactionId();
       const msg = { pGet: { transactionId, requestPattern } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       return new Promise((resolve, reject) => {
         pendingPStatePromises.set(transactionId, { resolve, reject });
       });
@@ -272,8 +258,7 @@ export function connect(
     const get = (key: Key, onmessage?: StateCallback): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { get: { transactionId, key } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
         pendingStates.set(transactionId, onmessage);
       }
@@ -286,8 +271,7 @@ export function connect(
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pGet: { transactionId, requestPattern } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
         pendingPStates.set(transactionId, onmessage);
       }
@@ -297,8 +281,7 @@ export function connect(
     const del = (key: Key, onmessage?: StateCallback): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { delete: { transactionId, key } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
         pendingStates.set(transactionId, onmessage);
       }
@@ -311,8 +294,7 @@ export function connect(
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pDelete: { transactionId, requestPattern } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
         pendingPStates.set(transactionId, onmessage);
       }
@@ -322,16 +304,14 @@ export function connect(
     const set = (key: Key, value: Value): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { set: { transactionId, key, value } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       return transactionId;
     };
 
     const publish = (key: Key, value: Value): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { publish: { transactionId, key, value } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       return transactionId;
     };
 
@@ -344,13 +324,9 @@ export function connect(
       const msg = {
         subscribe: { transactionId, key, unique: unique || false },
       };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
-        subscriptions.set(transactionId, {
-          callback: onmessage,
-          live: false,
-        });
+        subscriptions.set(transactionId, onmessage);
       }
 
       return transactionId;
@@ -369,13 +345,9 @@ export function connect(
           unique: unique || false,
         },
       };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
-        psubscriptions.set(transactionId, {
-          callback: onmessage,
-          live: false,
-        });
+        psubscriptions.set(transactionId, onmessage);
       }
 
       return transactionId;
@@ -388,15 +360,13 @@ export function connect(
       const msg = {
         unsubscribe: { transactionId },
       };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
     };
 
     const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
       const transactionId = nextTransactionId();
       const msg = { ls: { transactionId, parent } };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (callback) {
         pendingLsStates.set(transactionId, callback);
       }
@@ -413,13 +383,9 @@ export function connect(
       const msg = {
         subscribeLs: { transactionId, parent },
       };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
       if (onmessage) {
-        lssubscriptions.set(transactionId, {
-          callback: onmessage,
-          live: false,
-        });
+        lssubscriptions.set(transactionId, onmessage);
       }
 
       return transactionId;
@@ -431,8 +397,7 @@ export function connect(
       const msg = {
         unsubscribeLs: { transactionId },
       };
-      const buf = encode_client_message(msg);
-      socket.send(buf);
+      sendMsg(msg, socket);
     };
 
     const close = () => socket.close();
@@ -487,7 +452,7 @@ export function connect(
     };
 
     const checkKeepalive = () => {
-      if (Date.now() - lastMsgReceived >= 2000) {
+      if (lastMsgSent - lastMsgReceived >= 3000) {
         console.log("Server has been inactive for too long. Disconnecting.");
         socket.close();
       }
@@ -495,6 +460,7 @@ export function connect(
 
     const sendKeepalive = () => {
       socket.send(JSON.stringify(""));
+      lastMsgSent = Date.now();
     };
 
     const processStateMsg = (msg: StateMsg) => {
@@ -516,13 +482,12 @@ export function connect(
         const pending = pendingStates.get(transactionId);
         if (pending) {
           pendingStates.delete(transactionId);
-          pending(event, true);
+          pending(event);
         }
 
         const subscription = subscriptions.get(transactionId);
         if (subscription) {
-          subscription.callback(event, subscription.live);
-          subscription.live = true;
+          subscription(event);
         }
       }
     };
@@ -542,13 +507,12 @@ export function connect(
         const pending = pendingLsStates.get(transactionId);
         if (pending) {
           pendingLsStates.delete(transactionId);
-          pending(event, true);
+          pending(event);
         }
 
         const subscription = lssubscriptions.get(transactionId);
         if (subscription) {
-          subscription.callback(event, subscription.live);
-          subscription.live = true;
+          subscription(event);
         }
       }
     };
@@ -574,13 +538,12 @@ export function connect(
         const pending = pendingPStates.get(transactionId);
         if (pending) {
           pendingPStates.delete(transactionId);
-          pending(event, true);
+          pending(event);
         }
 
         const subscription = psubscriptions.get(transactionId);
         if (subscription) {
-          subscription.callback(event, subscription.live);
-          subscription.live = true;
+          subscription(event);
         }
       }
     };
@@ -611,6 +574,7 @@ export function connect(
     };
 
     socket.onmessage = async (e: MessageEvent) => {
+      lastMsgReceived = Date.now();
       const msg: ServerMessage = decode_server_message(e.data);
 
       if (connection.onmessage) {
@@ -629,6 +593,12 @@ export function connect(
       }
     };
   });
+
+  function sendMsg(msg: ClientMessage, socket: any) {
+    const buf = encode_client_message(msg);
+    socket.send(buf);
+    lastMsgSent = Date.now();
+  }
 }
 
 function matches(key: string, pattern: string, connection: Connection) {
