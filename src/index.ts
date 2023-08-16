@@ -1,6 +1,10 @@
 import WebSocket from "isomorphic-ws";
 import { v4 as uuidv4 } from "uuid";
 
+let keepalive: number;
+let lastMsgReceived: number;
+let lastMsgSent: number;
+
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
@@ -467,6 +471,7 @@ export function connect(
 
     socket.onclose = (e: CloseEvent) => {
       console.log("Connection to server closed.");
+      clearInterval(keepalive);
       rej(e);
       state.connected = false;
       if (connection.onclose) {
@@ -479,6 +484,17 @@ export function connect(
       if (connection.onwserror) {
         connection.onwserror(e);
       }
+    };
+
+    const checkKeepalive = () => {
+      if (Date.now() - lastMsgReceived >= 2000) {
+        console.log("Server has been inactive for too long. Disconnecting.");
+        socket.close();
+      }
+    };
+
+    const sendKeepalive = () => {
+      socket.send(JSON.stringify(""));
     };
 
     const processStateMsg = (msg: StateMsg) => {
@@ -587,6 +603,10 @@ export function connect(
     };
 
     const processHandshakeMsg = (msg: HandshakeMsg) => {
+      keepalive = setInterval(() => {
+        checkKeepalive();
+        sendKeepalive();
+      }, 1000);
       res(connection);
     };
 
