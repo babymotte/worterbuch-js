@@ -233,6 +233,8 @@ export function connect(
   graveGoods?: Key[]
 ): Promise<Worterbuch> {
   return new Promise((res, rej) => {
+    let connected = false;
+    let connectionFailed = false;
     console.log("Connecting to Worterbuch server " + address + " …");
 
     const socket = new WebSocket(address);
@@ -514,19 +516,25 @@ export function connect(
     };
 
     socket.onclose = (e: CloseEvent) => {
+      connectionFailed = true;
       console.log("Connection to server closed.");
       clearInterval(keepalive);
-      rej(e);
       state.connected = false;
       if (connection.onclose) {
         connection.onclose(e);
       }
+      if (!connected) {
+        rej(e);
+      }
     };
 
     socket.onerror = (e: Event) => {
-      rej(e);
+      connectionFailed = true;
       if (connection.onwserror) {
         connection.onwserror(e);
+      }
+      if (!connected) {
+        rej(e);
       }
     };
 
@@ -747,7 +755,10 @@ export function connect(
         checkKeepalive();
         sendKeepalive();
       }, 1000);
-      res(connection);
+      connected = true;
+      if (!connectionFailed) {
+        res(connection);
+      }
     };
 
     socket.onmessage = async (e: MessageEvent) => {
