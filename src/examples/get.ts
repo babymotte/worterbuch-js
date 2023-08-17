@@ -5,7 +5,13 @@ async function run() {
 
   wb.set("hello", "world");
 
-  const value = await wb.getValue("hello");
+  wb.getAsync("hello", console.log);
+  wb.getAsync("hello/doesnt/exist", console.log, console.error);
+
+  let value = await wb.get("hello");
+  console.log(value);
+
+  value = await wb.get("hello/doesnt/exist");
   console.log(value);
 
   wb.close();

@@ -1,5 +1,4 @@
 import WebSocket from "isomorphic-ws";
-import { v4 as uuidv4 } from "uuid";
 
 let keepalive: number;
 let lastMsgReceived: number;
@@ -8,7 +7,7 @@ let lastMsgSent: number;
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
-export type Value = any;
+export type Value = Object | Array<any> | string | number | boolean;
 export type Children = string[];
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
@@ -24,9 +23,14 @@ export type PStateEvent = {
 export type LsEvent = {
   children: Children;
 };
+
+export type GetCallback = (item: Value | null) => void;
+export type DeleteCallback = GetCallback;
+export type PGetCallback = (items: KeyValuePairs) => void;
+export type PDeleteCallback = PGetCallback;
 export type StateCallback = (event: StateEvent) => void;
 export type PStateCallback = (event: PStateEvent) => void;
-export type LsCallback = (event: LsEvent) => void;
+export type LsCallback = (children: Children) => void;
 export type Ack = { transactionId: TransactionID };
 export type State = {
   transactionId: TransactionID;
@@ -151,34 +155,53 @@ export type ClientMessage =
   | SubscribeLsMsg
   | UnsubscribeLsMsg;
 
-export type Connection = {
-  getValue: (key: Key) => Promise<Value>;
-  pGetValues: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  get: (key: Key, callback?: StateCallback) => TransactionID;
-  pGet: (
-    requestPattern: RequestPattern,
-    callback?: PStateCallback
+export type Worterbuch = {
+  get: (key: Key) => Promise<Value | null>;
+  getAsync: (
+    key: Key,
+    callback?: GetCallback,
+    onerror?: Rejection
   ) => TransactionID;
-  del: (key: Key, callback?: StateCallback) => TransactionID;
-  pDel: (
+  pGet: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
+  pGetAsync: (
     requestPattern: RequestPattern,
-    callback?: PStateCallback
+    callback?: PGetCallback,
+    onerror?: Rejection
+  ) => TransactionID;
+  delete: (key: Key) => Promise<Value | null>;
+  deleteAsync: (
+    key: Key,
+    callback?: DeleteCallback,
+    onerror?: Rejection
+  ) => TransactionID;
+  pDelete: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
+  pDeleteAsync: (
+    requestPattern: RequestPattern,
+    callback?: PDeleteCallback,
+    onerror?: Rejection
   ) => TransactionID;
   set: (key: Key, value: Value) => TransactionID;
   publish: (key: Key, value: Value) => TransactionID;
   subscribe: (
     key: Key,
     callback?: StateCallback,
-    unique?: boolean
+    unique?: boolean,
+    onerror?: Rejection
   ) => TransactionID;
   pSubscribe: (
     requestPattern: RequestPattern,
     callback?: PStateCallback,
-    unique?: boolean
+    unique?: boolean,
+    onerror?: Rejection
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
-  ls: (parent: string, callback?: LsCallback) => void;
-  subscribeLs: (parent: string, callback?: LsCallback) => TransactionID;
+  ls: (parent: Key) => Promise<Children>;
+  lsAsync: (parent: Key, callback?: LsCallback, onerror?: Rejection) => void;
+  subscribeLs: (
+    parent: Key,
+    callback?: LsCallback,
+    onerror?: Rejection
+  ) => TransactionID;
   unsubscribeLs: (transactionID: TransactionID) => void;
   close: () => void;
   onclose?: (event: CloseEvent) => any;
@@ -188,11 +211,27 @@ export type Connection = {
   onhandshake?: (handshake: Handshake) => any;
 };
 
+export const ErrorCodes = {
+  IllegalWildcard: 0b00000000,
+  IllegalMultiWildcard: 0b00000001,
+  MultiWildcardAtIllegalPosition: 0b00000010,
+  IoError: 0b00000011,
+  SerdeError: 0b00000100,
+  NoSuchValue: 0b00000101,
+  NotSubscribed: 0b00000110,
+  ProtocolNegotiationFailed: 0b00000111,
+  InvalidServerResponse: 0b00001000,
+  ReadOnlyKey: 0b00001001,
+  Other: 0b11111111,
+};
+
+export type Rejection = (reason?: any) => void;
+
 export function connect(
   address: string,
   lastWill?: KeyValuePairs,
   graveGoods?: Key[]
-): Promise<Connection> {
+): Promise<Worterbuch> {
   return new Promise((res, rej) => {
     console.log("Connecting to Worterbuch server " + address + " …");
 
@@ -207,96 +246,121 @@ export function connect(
       return state.transactionId++;
     };
 
-    const pendingStatePromises = new Map<
+    const pendingGets = new Map<
       TransactionID,
-      {
-        resolve: (value: Value | undefined) => void;
-        reject: (reason?: any) => void;
-      }
+      [GetCallback, Rejection | undefined]
     >();
-    const pendingLsPromises = new Map<
+    const pendingPGets = new Map<
       TransactionID,
-      {
-        resolve: (children: Children) => void;
-        reject: (reason?: any) => void;
-      }
+      [PGetCallback, Rejection | undefined]
     >();
-    const pendingPStatePromises = new Map<
+    const pendingDeletes = new Map<
       TransactionID,
-      {
-        resolve: (value: Value | undefined) => void;
-        reject: (reason?: any) => void;
-      }
+      [DeleteCallback, Rejection | undefined]
     >();
-    const pendingStates = new Map<TransactionID, StateCallback>();
-    const pendingPStates = new Map<TransactionID, PStateCallback>();
-    const pendingLsStates = new Map<TransactionID, LsCallback>();
-    const subscriptions = new Map<TransactionID, StateCallback>();
-    const psubscriptions = new Map<TransactionID, PStateCallback>();
-    const lssubscriptions = new Map<TransactionID, LsCallback>();
+    const pendingPDeletes = new Map<
+      TransactionID,
+      [PDeleteCallback, Rejection | undefined]
+    >();
+    const pendingLsStates = new Map<
+      TransactionID,
+      [LsCallback, Rejection | undefined]
+    >();
+    const subscriptions = new Map<
+      TransactionID,
+      [StateCallback, Rejection | undefined]
+    >();
+    const psubscriptions = new Map<
+      TransactionID,
+      [PStateCallback, Rejection | undefined]
+    >();
+    const lssubscriptions = new Map<
+      TransactionID,
+      [LsCallback, Rejection | undefined]
+    >();
 
-    const getValue = async (key: Key): Promise<Value> => {
-      const transactionId = nextTransactionId();
-      const msg = { get: { transactionId, key } };
-      sendMsg(msg, socket);
+    const get = (key: Key): Promise<Value | null> => {
       return new Promise((resolve, reject) => {
-        pendingStatePromises.set(transactionId, { resolve, reject });
+        // TODO reject after timeout?
+        getAsync(key, resolve, reject);
       });
     };
 
-    const pGetValues = async (
-      requestPattern: RequestPattern
-    ): Promise<KeyValuePairs> => {
-      const transactionId = nextTransactionId();
-      const msg = { pGet: { transactionId, requestPattern } };
-      sendMsg(msg, socket);
-      return new Promise((resolve, reject) => {
-        pendingPStatePromises.set(transactionId, { resolve, reject });
-      });
-    };
-
-    const get = (key: Key, onmessage?: StateCallback): TransactionID => {
+    const getAsync = (
+      key: Key,
+      onmessage?: GetCallback,
+      onerror?: Rejection
+    ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { get: { transactionId, key } };
       sendMsg(msg, socket);
       if (onmessage) {
-        pendingStates.set(transactionId, onmessage);
+        pendingGets.set(transactionId, [onmessage, onerror]);
       }
       return transactionId;
     };
 
-    const pGet = (
+    const pGet = (requestPattern: RequestPattern): Promise<KeyValuePairs> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        pGetAsync(requestPattern, resolve, reject);
+      });
+    };
+
+    const pGetAsync = (
       requestPattern: RequestPattern,
-      onmessage?: PStateCallback
+      onmessage?: PGetCallback,
+      onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pGet: { transactionId, requestPattern } };
       sendMsg(msg, socket);
       if (onmessage) {
-        pendingPStates.set(transactionId, onmessage);
+        pendingPGets.set(transactionId, [onmessage, onerror]);
       }
       return transactionId;
     };
 
-    const del = (key: Key, onmessage?: StateCallback): TransactionID => {
+    const del = (key: Key): Promise<Value | null> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        deleteAsync(key, resolve, reject);
+      });
+    };
+
+    const deleteAsync = (
+      key: Key,
+      onmessage?: DeleteCallback,
+      onerror?: Rejection
+    ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { delete: { transactionId, key } };
       sendMsg(msg, socket);
       if (onmessage) {
-        pendingStates.set(transactionId, onmessage);
+        pendingDeletes.set(transactionId, [onmessage, onerror]);
       }
       return transactionId;
     };
 
-    const pDel = (
+    const pDelete = (
+      requestPattern: RequestPattern
+    ): Promise<KeyValuePairs> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        pDeleteAsync(requestPattern, resolve, reject);
+      });
+    };
+
+    const pDeleteAsync = (
       requestPattern: RequestPattern,
-      onmessage?: PStateCallback
+      onmessage?: PDeleteCallback,
+      onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pDelete: { transactionId, requestPattern } };
       sendMsg(msg, socket);
       if (onmessage) {
-        pendingPStates.set(transactionId, onmessage);
+        pendingPDeletes.set(transactionId, [onmessage, onerror]);
       }
       return transactionId;
     };
@@ -318,7 +382,8 @@ export function connect(
     const subscribe = (
       key: Key,
       onmessage?: StateCallback,
-      unique?: boolean
+      unique?: boolean,
+      onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = {
@@ -326,7 +391,7 @@ export function connect(
       };
       sendMsg(msg, socket);
       if (onmessage) {
-        subscriptions.set(transactionId, onmessage);
+        subscriptions.set(transactionId, [onmessage, onerror]);
       }
 
       return transactionId;
@@ -335,7 +400,8 @@ export function connect(
     const pSubscribe = (
       requestPattern: RequestPattern,
       onmessage?: PStateCallback,
-      unique?: boolean
+      unique?: boolean,
+      onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = {
@@ -347,7 +413,7 @@ export function connect(
       };
       sendMsg(msg, socket);
       if (onmessage) {
-        psubscriptions.set(transactionId, onmessage);
+        psubscriptions.set(transactionId, [onmessage, onerror]);
       }
 
       return transactionId;
@@ -363,21 +429,31 @@ export function connect(
       sendMsg(msg, socket);
     };
 
-    const ls = (parent: string, callback?: LsCallback): Promise<Children> => {
+    const ls = (parent: string): Promise<Children> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        lsAsync(parent, resolve, reject);
+      });
+    };
+
+    const lsAsync = (
+      parent: string,
+      callback?: LsCallback,
+      onerror?: Rejection
+    ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { ls: { transactionId, parent } };
       sendMsg(msg, socket);
       if (callback) {
-        pendingLsStates.set(transactionId, callback);
+        pendingLsStates.set(transactionId, [callback, onerror]);
       }
-      return new Promise((resolve, reject) => {
-        pendingLsPromises.set(transactionId, { resolve, reject });
-      });
+      return transactionId;
     };
 
     const subscribeLs = (
       parent: string,
-      onmessage?: LsCallback
+      onmessage?: LsCallback,
+      onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = {
@@ -385,7 +461,7 @@ export function connect(
       };
       sendMsg(msg, socket);
       if (onmessage) {
-        lssubscriptions.set(transactionId, onmessage);
+        lssubscriptions.set(transactionId, [onmessage, onerror]);
       }
 
       return transactionId;
@@ -402,19 +478,22 @@ export function connect(
 
     const close = () => socket.close();
 
-    const connection: Connection = {
-      getValue,
-      pGetValues,
+    const connection: Worterbuch = {
       get,
       pGet,
-      del,
-      pDel,
+      getAsync,
+      pGetAsync,
+      delete: del,
+      pDelete,
+      deleteAsync,
+      pDeleteAsync,
       set,
       publish,
       subscribe,
       pSubscribe,
       unsubscribe,
       ls,
+      lsAsync,
       subscribeLs,
       unsubscribeLs,
       close,
@@ -466,10 +545,20 @@ export function connect(
     const processStateMsg = (msg: StateMsg) => {
       const { transactionId, keyValue, deleted } = msg.state;
 
-      const pendingPromise = pendingStatePromises.get(transactionId);
-      if (pendingPromise) {
-        pendingStatePromises.delete(transactionId);
-        pendingPromise.resolve(keyValue?.value);
+      if (keyValue) {
+        const pendingGet = pendingGets.get(transactionId);
+        if (pendingGet) {
+          pendingGets.delete(transactionId);
+          pendingGet[0](keyValue.value);
+        }
+      }
+
+      if (deleted) {
+        const pendingDelete = pendingDeletes.get(transactionId);
+        if (pendingDelete) {
+          pendingDeletes.delete(transactionId);
+          pendingDelete[0](deleted.value);
+        }
       }
 
       const event = keyValue
@@ -479,15 +568,9 @@ export function connect(
         : undefined;
 
       if (event) {
-        const pending = pendingStates.get(transactionId);
-        if (pending) {
-          pendingStates.delete(transactionId);
-          pending(event);
-        }
-
         const subscription = subscriptions.get(transactionId);
         if (subscription) {
-          subscription(event);
+          subscription[0](event);
         }
       }
     };
@@ -495,25 +578,15 @@ export function connect(
     const processLsStateMsg = (msg: LsStateMsg) => {
       const { transactionId, children } = msg.lsState;
 
-      const pendingPromise = pendingLsPromises.get(transactionId);
-      if (pendingPromise) {
-        pendingLsPromises.delete(transactionId);
-        pendingPromise.resolve(children);
+      const pending = pendingLsStates.get(transactionId);
+      if (pending) {
+        pendingLsStates.delete(transactionId);
+        pending[0](children);
       }
 
-      const event = { children };
-
-      if (event) {
-        const pending = pendingLsStates.get(transactionId);
-        if (pending) {
-          pendingLsStates.delete(transactionId);
-          pending(event);
-        }
-
-        const subscription = lssubscriptions.get(transactionId);
-        if (subscription) {
-          subscription(event);
-        }
+      const subscription = lssubscriptions.get(transactionId);
+      if (subscription) {
+        subscription[0](children);
       }
     };
 
@@ -522,10 +595,20 @@ export function connect(
       const keyValuePairs = msg.pState.keyValuePairs;
       const deleted = msg.pState.deleted;
 
-      const pendingPromise = pendingPStatePromises.get(transactionId);
-      if (pendingPromise) {
-        pendingPStatePromises.delete(transactionId);
-        pendingPromise.resolve(keyValuePairs);
+      if (keyValuePairs) {
+        const pendingPGet = pendingPGets.get(transactionId);
+        if (pendingPGet) {
+          pendingPGets.delete(transactionId);
+          pendingPGet[0](keyValuePairs);
+        }
+      }
+
+      if (deleted) {
+        const pendingPDelete = pendingPDeletes.get(transactionId);
+        if (pendingPDelete) {
+          pendingPDeletes.delete(transactionId);
+          pendingPDelete[0](deleted);
+        }
       }
 
       const event = keyValuePairs
@@ -535,33 +618,127 @@ export function connect(
         : undefined;
 
       if (event) {
-        const pending = pendingPStates.get(transactionId);
-        if (pending) {
-          pendingPStates.delete(transactionId);
-          pending(event);
-        }
-
         const subscription = psubscriptions.get(transactionId);
         if (subscription) {
-          subscription(event);
+          subscription[0](event);
         }
       }
     };
 
     const processErrMsg = (msg: ErrMsg) => {
       const transactionId = msg.err.transactionId;
-      const pendingStatePromise = pendingStatePromises.get(transactionId);
-      if (pendingStatePromise) {
-        pendingStatePromises.delete(transactionId);
-        pendingStatePromise.reject(msg.err);
+
+      const pendingGet = pendingGets.get(transactionId);
+      if (pendingGet) {
+        pendingGets.delete(transactionId);
+        let [resolve, reject] = pendingGet;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve(null);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in get with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-      const pendingPStatePromise = pendingPStatePromises.get(transactionId);
-      if (pendingPStatePromise) {
-        pendingPStatePromises.delete(transactionId);
-        pendingPStatePromise.reject(msg.err);
+
+      const pendingDelete = pendingDeletes.get(transactionId);
+      if (pendingDelete) {
+        pendingDeletes.delete(transactionId);
+        let [resolve, reject] = pendingDelete;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve(null);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in delete with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-      if (connection.onerror) {
-        connection.onerror(msg.err);
+
+      const pendingPGet = pendingPGets.get(transactionId);
+      if (pendingPGet) {
+        pendingPGets.delete(transactionId);
+        if (pendingPGet[1]) {
+          pendingPGet[1](msg.err);
+        } else {
+          console.error(
+            `Error in pget with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingPDelete = pendingPDeletes.get(transactionId);
+      if (pendingPDelete) {
+        pendingPDeletes.delete(transactionId);
+        if (pendingPDelete[1]) {
+          pendingPDelete[1](msg.err);
+        } else {
+          console.error(
+            `Error in pdelete with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingLs = pendingLsStates.get(transactionId);
+      if (pendingLs) {
+        pendingLsStates.delete(transactionId);
+        let [resolve, reject] = pendingLs;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve([]);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in ls with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const subscription = subscriptions.get(transactionId);
+      if (subscription) {
+        subscriptions.delete(transactionId);
+        if (subscription[1]) {
+          subscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in subscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const psubscription = psubscriptions.get(transactionId);
+      if (psubscription) {
+        psubscriptions.delete(transactionId);
+        if (psubscription[1]) {
+          psubscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in psubscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const lssubscription = lssubscriptions.get(transactionId);
+      if (lssubscription) {
+        lssubscriptions.delete(transactionId);
+        if (lssubscription[1]) {
+          lssubscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in lssubscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
     };
 
@@ -599,36 +776,6 @@ export function connect(
     socket.send(buf);
     lastMsgSent = Date.now();
   }
-}
-
-function matches(key: string, pattern: string, connection: Connection) {
-  const keySplit = key.split("/");
-  const patternSplit = pattern.split("/");
-
-  if (patternSplit.length > keySplit.length) {
-    return false;
-  }
-
-  if (
-    keySplit.length > patternSplit.length &&
-    patternSplit[patternSplit.length - 1] !== "#"
-  ) {
-    return false;
-  }
-
-  for (let i = 0; i < patternSplit.length; i++) {
-    if (patternSplit[i] === "?") {
-      continue;
-    }
-    if (patternSplit[i] === "#") {
-      return i === patternSplit.length - 1;
-    }
-    if (patternSplit[i] !== keySplit[i]) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function encode_client_message(msg: ClientMessage): string {

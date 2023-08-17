@@ -7,9 +7,7 @@ connect("ws://localhost:8080/ws").then(async (wb) => {
   wb.set("hello/world", 123);
   wb.set("hello/you", 123);
 
-  wb.ls("hello", ({ children }) => {
-    console.log(children);
-  });
+  wb.lsAsync("hello", console.log);
 
   const children = await wb.ls("hello");
   console.log(children);

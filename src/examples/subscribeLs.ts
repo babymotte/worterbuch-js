@@ -2,7 +2,7 @@ import { connect } from "../index";
 import { sleep } from "./util";
 
 const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
-  wb.pDel("hello/#");
+  wb.pDelete("hello/#");
 
   let sid = wb.subscribeLs("hello", console.log);
 
@@ -13,7 +13,7 @@ const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
   await sleep(1);
   wb.set("hello/you", 123);
   await sleep(1);
-  wb.pDel("hello/#");
+  wb.pDelete("hello/#");
   await sleep(1);
   wb.unsubscribeLs(sid);
   wb.set("hello/you", 123);
