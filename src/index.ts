@@ -235,6 +235,8 @@ export function connect(
   return new Promise((res, rej) => {
     let connected = false;
     let connectionFailed = false;
+    let closing = false;
+
     console.log("Connecting to Worterbuch server " + address + " …");
 
     const socket = new WebSocket(address);
@@ -478,7 +480,10 @@ export function connect(
       sendMsg(msg, socket);
     };
 
-    const close = () => socket.close();
+    const close = () => {
+      closing = true;
+      socket.close();
+    };
 
     const connection: Worterbuch = {
       get,
@@ -517,7 +522,14 @@ export function connect(
 
     socket.onclose = (e: CloseEvent) => {
       connectionFailed = true;
-      console.log("Connection to server closed.");
+      if (closing) {
+        console.log("Connection to server closed.");
+      } else {
+        console.error(
+          `Connection to server was closed unexpectedly (code: ${e.code}):`,
+          e.reason
+        );
+      }
       clearInterval(keepalive);
       state.connected = false;
       if (connection.onclose) {
@@ -532,6 +544,8 @@ export function connect(
       connectionFailed = true;
       if (connection.onwserror) {
         connection.onwserror(e);
+      } else {
+        console.error("WebSocket error:", e);
       }
       if (!connected) {
         rej(e);
