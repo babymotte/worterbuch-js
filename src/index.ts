@@ -485,6 +485,39 @@ export function connect(
       socket.close();
     };
 
+    const checkKeepalive = () => {
+      if (closing) {
+        if (socket.readyState === 2) {
+          console.error(
+            "Clean disconnect not possible, terminating connection."
+          );
+          if (socket.onerror) {
+            socket.onerror();
+          }
+          if (socket.onclose) {
+            socket.onclose();
+          }
+          return;
+        }
+        console.log(
+          `Waiting for websocket to close (ready state: ${socket.readyState}) …`
+        );
+        return;
+      }
+      const lag = lastMsgSent - lastMsgReceived;
+      if (lag >= 1000) {
+        console.warn(
+          `Server has been inactive for ${Math.round(
+            (lastMsgSent - lastMsgReceived) / 1000
+          )} seconds.`
+        );
+      }
+      if (lag >= 5000) {
+        console.log("Server has been inactive for too long. Disconnecting …");
+        close();
+      }
+    };
+
     const connection: Worterbuch = {
       get,
       pGet,
@@ -549,13 +582,6 @@ export function connect(
       }
       if (!connected) {
         rej(e);
-      }
-    };
-
-    const checkKeepalive = () => {
-      if (lastMsgSent - lastMsgReceived >= 3000) {
-        console.log("Server has been inactive for too long. Disconnecting.");
-        socket.close();
       }
     };
 
