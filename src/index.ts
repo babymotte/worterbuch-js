@@ -79,11 +79,11 @@ export type Unsubscribe = {
 };
 export type Ls = {
   transactionId: number;
-  parent: string;
+  parent?: string;
 };
 export type SubscribeLs = {
   transactionId: number;
-  parent: string;
+  parent?: string;
 };
 export type UnsubscribeLs = {
   transactionId: number;
@@ -195,10 +195,10 @@ export type Worterbuch = {
     onerror?: Rejection
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
-  ls: (parent: Key) => Promise<Children>;
-  lsAsync: (parent: Key, callback?: LsCallback, onerror?: Rejection) => void;
+  ls: (parent?: Key) => Promise<Children>;
+  lsAsync: (parent?: Key, callback?: LsCallback, onerror?: Rejection) => void;
   subscribeLs: (
-    parent: Key,
+    parent?: Key,
     callback?: LsCallback,
     onerror?: Rejection
   ) => TransactionID;
@@ -433,7 +433,7 @@ export function connect(
       sendMsg(msg, socket);
     };
 
-    const ls = (parent: string): Promise<Children> => {
+    const ls = (parent?: string): Promise<Children> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         lsAsync(parent, resolve, reject);
@@ -441,7 +441,7 @@ export function connect(
     };
 
     const lsAsync = (
-      parent: string,
+      parent?: string,
       callback?: LsCallback,
       onerror?: Rejection
     ): TransactionID => {
@@ -455,7 +455,7 @@ export function connect(
     };
 
     const subscribeLs = (
-      parent: string,
+      parent?: string,
       onmessage?: LsCallback,
       onerror?: Rejection
     ): TransactionID => {

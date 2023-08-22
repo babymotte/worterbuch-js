@@ -8,8 +8,11 @@ connect("ws://localhost:8080/ws").then(async (wb) => {
   wb.set("hello/you", 123);
 
   wb.lsAsync("hello", console.log);
+  wb.lsAsync(undefined, console.log);
 
-  const children = await wb.ls("hello");
+  let children = await wb.ls("hello");
+  console.log(children);
+  children = await wb.ls();
   console.log(children);
 
   wb.close();
