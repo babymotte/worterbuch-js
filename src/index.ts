@@ -1,6 +1,22 @@
 import WebSocket from "isomorphic-ws";
 
-let keepalive: number;
+let MAX_LAG = 5_000;
+if (
+  typeof process === "object" &&
+  process.env !== undefined &&
+  process.env.WORTERBUCH_KEEPALIVE_TIMEOUT !== undefined
+) {
+  try {
+    MAX_LAG = parseInt(process.env.WORTERBUCH_KEEPALIVE_TIMEOUT) * 1_000;
+  } catch (e) {
+    console.error(
+      "Invalid value of WORTERBUCH_KEEPALIVE_TIMEOUT:",
+      process.env.WORTERBUCH_KEEPALIVE_TIMEOUT
+    );
+  }
+}
+
+let keepalive: NodeJS.Timeout | number;
 let lastMsgReceived: number;
 let lastMsgSent: number;
 
@@ -505,14 +521,14 @@ export function connect(
         return;
       }
       const lag = lastMsgSent - lastMsgReceived;
-      if (lag >= 1000) {
+      if (lag >= 2000) {
         console.warn(
           `Server has been inactive for ${Math.round(
             (lastMsgSent - lastMsgReceived) / 1000
           )} seconds.`
         );
       }
-      if (lag >= 5000) {
+      if (lag >= MAX_LAG) {
         console.log("Server has been inactive for too long. Disconnecting …");
         close();
       }
