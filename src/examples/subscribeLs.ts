@@ -1,7 +1,9 @@
-import { connect } from "../index";
 import { sleep } from "./util";
+import { connect } from "./util";
 
-const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
+async function main() {
+  const wb = await connect();
+
   wb.pDelete("hello/#");
 
   let sid = wb.subscribeLs("hello", console.log);
@@ -20,4 +22,6 @@ const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
   await sleep(1);
 
   wb.close();
-});
+}
+
+main();

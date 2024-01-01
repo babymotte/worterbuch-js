@@ -1,7 +1,9 @@
-import { Worterbuch, connect } from "../index";
-import { sleep } from "./util";
+import { Worterbuch } from "../index";
+import { sleep, connect } from "./util";
 
-const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
+async function main() {
+  const wb = await connect();
+
   wb.pDelete("hello/#");
 
   wb.set("hello", "world");
@@ -13,7 +15,7 @@ const wb = connect("ws://localhost:8080/ws").then(async (wb) => {
   await subUnsub(wb);
 
   wb.close();
-});
+}
 
 async function subUnsub(wb: Worterbuch) {
   await sleep(1);
@@ -24,3 +26,5 @@ async function subUnsub(wb: Worterbuch) {
   console.log("unsubscribing");
   wb.unsubscribe(sid);
 }
+
+main();

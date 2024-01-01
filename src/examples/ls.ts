@@ -1,6 +1,8 @@
-import { connect } from "../index";
+import { connect } from "./util";
 
-connect("ws://localhost:8080/ws").then(async (wb) => {
+async function main() {
+  const wb = await connect();
+
   wb.onclose = () => console.log("connection closed");
 
   wb.set("hello/there", 123);
@@ -16,4 +18,6 @@ connect("ws://localhost:8080/ws").then(async (wb) => {
   console.log(children);
 
   wb.close();
-});
+}
+
+main();

@@ -20,7 +20,8 @@
     "typescript": "^4.7.4"
   },
   "dependencies": {
-    "isomorphic-ws": "^5.0.0"
+    "isomorphic-ws": "^5.0.0",
+    "js-sha256": "^0.10.1"
   },
   "repository": {
     "type": "git",

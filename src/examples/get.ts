@@ -1,7 +1,7 @@
-import { connect } from "../index";
+import { connect } from "./util";
 
-async function run() {
-  const wb = await connect("ws://localhost:8080/ws");
+async function main() {
+  const wb = await connect();
 
   wb.set("hello", "world");
 
@@ -17,4 +17,4 @@ async function run() {
   wb.close();
 }
 
-run();
+main();
