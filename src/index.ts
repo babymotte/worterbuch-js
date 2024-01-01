@@ -230,8 +230,8 @@ export type Worterbuch = {
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
   lastWill: () => Promise<KeyValuePairs>;
-  setGraveGoods: (graveGoods: string[]) => void;
-  setLastWill: (lastWill: KeyValuePairs) => void;
+  setGraveGoods: (graveGoods: string[] | undefined) => void;
+  setLastWill: (lastWill: KeyValuePairs | undefined) => void;
 };
 
 export const ErrorCodes = {
@@ -588,12 +588,20 @@ function startWebsocket(
     return (it as KeyValuePairs) || [];
   };
 
-  const setGraveGoods = (graveGoods: string[]) => {
-    set(`$SYS/clients/${clientId()}/graveGoods`, graveGoods);
+  const setGraveGoods = (graveGoods: string[] | undefined) => {
+    if (!graveGoods) {
+      del(`$SYS/clients/${clientId()}/graveGoods`);
+    } else {
+      set(`$SYS/clients/${clientId()}/graveGoods`, graveGoods);
+    }
   };
 
-  const setLastWill = (lastWill: KeyValuePairs) => {
-    set(`$SYS/clients/${clientId()}/lastWill`, lastWill);
+  const setLastWill = (lastWill: KeyValuePairs | undefined) => {
+    if (!lastWill) {
+      del(`$SYS/clients/${clientId()}/lastWill`);
+    } else {
+      set(`$SYS/clients/${clientId()}/lastWill`, lastWill);
+    }
   };
 
   const connection: Worterbuch = {
