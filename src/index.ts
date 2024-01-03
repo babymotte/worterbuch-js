@@ -896,6 +896,9 @@ function startWebsocket(
       SUPPORTED_PROTOCOL_VERSIONS.includes(msg.welcome.info.protocolVersion)
     ) {
       clientIdHolder.clientId = msg.welcome.clientId;
+      if (keepalive) {
+        clearInterval(keepalive);
+      }
       keepalive = setInterval(() => {
         checkKeepalive();
         sendKeepalive();
