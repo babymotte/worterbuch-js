@@ -226,7 +226,6 @@ export type Worterbuch = {
   onerror?: (event: Err) => any;
   onwserror?: (event: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
-  onwelcome?: (welcome: WelcomeMsg) => any;
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
   lastWill: () => Promise<KeyValuePairs>;
@@ -278,7 +277,6 @@ function startWebsocket(
   authToken: string | undefined
 ) {
   let connected = false;
-  let connectionFailed = false;
   let closing = false;
 
   console.log("Connecting to Worterbuch server " + address + " …");
@@ -299,6 +297,14 @@ function startWebsocket(
       const token = hash.hex();
       const msg = { authenticationRequest: { authToken: token } };
       sendMsg(msg, socket);
+    } else {
+      connected = false;
+      rej(
+        new Error(
+          "Server requires authentication but no auth token was provided."
+        )
+      );
+      connection.close();
     }
   };
 
@@ -636,12 +642,19 @@ function startWebsocket(
   };
 
   socket.onclose = (e: CloseEvent) => {
-    connectionFailed = true;
-    if (closing) {
-      console.log("Connection to server closed.");
+    if (connected) {
+      if (closing) {
+        console.log("Connection to server closed.");
+      } else {
+        console.error(
+          `Connection to server was closed unexpectedly (code: ${e.code}): ${e.reason}`
+        );
+      }
     } else {
-      console.error(
-        `Connection to server was closed unexpectedly (code: ${e.code}): ${e.reason}`
+      rej(
+        new Error(
+          `Connection to server was closed unexpectedly (code: ${e.code}): ${e.reason}`
+        )
       );
     }
     clearInterval(keepalive);
@@ -649,13 +662,9 @@ function startWebsocket(
     if (connection.onclose) {
       connection.onclose(e);
     }
-    if (!connected) {
-      rej(e);
-    }
   };
 
   socket.onerror = (e: Event) => {
-    connectionFailed = true;
     if (connection.onwserror) {
       connection.onwserror(e);
     } else {
@@ -663,6 +672,7 @@ function startWebsocket(
     }
     if (!connected) {
       rej(e);
+      connection.close();
     }
   };
 
@@ -891,22 +901,22 @@ function startWebsocket(
       }, 1000);
       if (msg.welcome.info.authenticationRequired) {
         authenticate(msg.welcome.clientId);
-      }
-      connected = true;
-      if (!connectionFailed) {
+      } else {
+        connected = true;
         res(connection);
       }
     } else {
       const err = `Protocol version ${msg.welcome.info.protocolVersion} is not supported by this client!`;
-      console.error(err);
       connected = false;
-      socket.close();
-      throw new Error(err);
+      rej(new Error(err));
+      connection.close();
     }
   };
 
   const processAuthenticatedMsg = (msg: AuthenticatedMsg) => {
     console.info("Authentication successful.");
+    connected = true;
+    res(connection);
   };
 
   socket.onmessage = async (e: MessageEvent) => {
