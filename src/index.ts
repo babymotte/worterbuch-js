@@ -184,12 +184,14 @@ export type Worterbuch = {
     key: Key,
     callback?: StateCallback,
     unique?: boolean,
+    liveOnly?: boolean,
     onerror?: Rejection
   ) => TransactionID;
   pSubscribe: (
     requestPattern: RequestPattern,
     callback?: PStateCallback,
     unique?: boolean,
+    liveOnly?: boolean,
     onerror?: Rejection
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
@@ -436,11 +438,17 @@ function startWebsocket(
     key: Key,
     onmessage?: StateCallback,
     unique?: boolean,
+    liveOnly?: boolean,
     onerror?: Rejection
   ): TransactionID => {
     const transactionId = nextTransactionId();
     const msg = {
-      subscribe: { transactionId, key, unique: unique || false },
+      subscribe: {
+        transactionId,
+        key,
+        unique: unique || false,
+        liveOnly: liveOnly || false,
+      },
     };
     sendMsg(msg, socket);
     if (onmessage) {
@@ -454,6 +462,7 @@ function startWebsocket(
     requestPattern: RequestPattern,
     onmessage?: PStateCallback,
     unique?: boolean,
+    liveOnly?: boolean,
     onerror?: Rejection
   ): TransactionID => {
     const transactionId = nextTransactionId();
@@ -462,6 +471,7 @@ function startWebsocket(
         transactionId,
         requestPattern,
         unique: unique || false,
+        liveOnly: liveOnly || false,
       },
     };
     sendMsg(msg, socket);

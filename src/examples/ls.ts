@@ -9,8 +9,8 @@ async function main() {
   wb.set("hello/world", 123);
   wb.set("hello/you", 123);
 
-  wb.lsAsync("hello", console.log);
-  wb.lsAsync(undefined, console.log);
+  wb.ls("hello").then(console.log);
+  wb.ls(undefined).then(console.log);
 
   let children = await wb.ls("hello");
   console.log(children);

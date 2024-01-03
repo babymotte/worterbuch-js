@@ -5,8 +5,8 @@ async function main() {
 
   wb.set("hello", "world");
 
-  wb.getAsync("hello", console.log);
-  wb.getAsync("hello/doesnt/exist", console.log, console.error);
+  wb.get("hello").then(console.log);
+  wb.get("hello/doesnt/exist").then(console.log).catch(console.error);
 
   let value = await wb.get("hello");
   console.log(value);

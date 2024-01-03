@@ -33,6 +33,7 @@ export function subscriptionPool(wb: Worterbuch): SubscriptionPool {
     key: Key,
     callback: Callback,
     unique?: boolean,
+    liveOnly?: boolean,
     onerror?: Rejection
   ) => {
     const subscriptionId = uuidv4();
@@ -61,6 +62,7 @@ export function subscriptionPool(wb: Worterbuch): SubscriptionPool {
             ?.forEach((cb) => cb[0](event.value || null));
         },
         unique,
+        liveOnly,
         (err) => {
           // TODO propagate error
         }
