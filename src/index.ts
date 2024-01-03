@@ -552,14 +552,15 @@ function startWebsocket(
 
   const checkKeepalive = () => {
     if (closing) {
-      if (socket.readyState === 2) {
-        console.error("Clean disconnect not possible, terminating connection.");
+      if (socket.readyState === 2 || socket.readyState === 3) {
+        console.error("Clean disconnect failed, terminating connection.");
         if (socket.onerror) {
           socket.onerror();
         }
         if (socket.onclose) {
           socket.onclose();
         }
+        clearInterval(keepalive);
         return;
       }
       console.log(
