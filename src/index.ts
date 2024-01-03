@@ -283,6 +283,11 @@ function startWebsocket(
 
   const socket = new WebSocket(address);
 
+  const close = () => {
+    closing = true;
+    socket.close();
+  };
+
   const sendMsg = (msg: ClientMessage, socket: any) => {
     const buf = encode_client_message(msg);
     socket.send(buf);
@@ -304,7 +309,7 @@ function startWebsocket(
           "Server requires authentication but no auth token was provided."
         )
       );
-      connection.close();
+      close();
     }
   };
 
@@ -545,11 +550,6 @@ function startWebsocket(
     sendMsg(msg, socket);
   };
 
-  const close = () => {
-    closing = true;
-    socket.close();
-  };
-
   const checkKeepalive = () => {
     if (closing) {
       if (socket.readyState === 2) {
@@ -672,7 +672,7 @@ function startWebsocket(
     }
     if (!connected) {
       rej(e);
-      connection.close();
+      close();
     }
   };
 
@@ -909,7 +909,7 @@ function startWebsocket(
       const err = `Protocol version ${msg.welcome.info.protocolVersion} is not supported by this client!`;
       connected = false;
       rej(new Error(err));
-      connection.close();
+      close();
     }
   };
 
