@@ -175,29 +175,9 @@ export type ClientMessage =
 
 export type Worterbuch = {
   get: (key: Key) => Promise<Value | null>;
-  getAsync: (
-    key: Key,
-    callback?: GetCallback,
-    onerror?: Rejection
-  ) => TransactionID;
   pGet: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  pGetAsync: (
-    requestPattern: RequestPattern,
-    callback?: PGetCallback,
-    onerror?: Rejection
-  ) => TransactionID;
   delete: (key: Key) => Promise<Value | null>;
-  deleteAsync: (
-    key: Key,
-    callback?: DeleteCallback,
-    onerror?: Rejection
-  ) => TransactionID;
   pDelete: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  pDeleteAsync: (
-    requestPattern: RequestPattern,
-    callback?: PDeleteCallback,
-    onerror?: Rejection
-  ) => TransactionID;
   set: (key: Key, value: Value) => TransactionID;
   publish: (key: Key, value: Value) => TransactionID;
   subscribe: (
@@ -214,7 +194,6 @@ export type Worterbuch = {
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
   ls: (parent?: Key) => Promise<Children>;
-  lsAsync: (parent?: Key, callback?: LsCallback, onerror?: Rejection) => void;
   subscribeLs: (
     parent?: Key,
     callback?: LsCallback,
@@ -615,19 +594,14 @@ function startWebsocket(
     clientId,
     get,
     pGet,
-    getAsync,
-    pGetAsync,
     delete: del,
     pDelete,
-    deleteAsync,
-    pDeleteAsync,
     set,
     publish,
     subscribe,
     pSubscribe,
     unsubscribe,
     ls,
-    lsAsync,
     subscribeLs,
     unsubscribeLs,
     close,
