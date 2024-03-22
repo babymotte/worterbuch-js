@@ -228,11 +228,12 @@ export type Rejection = (reason?: any) => void;
 
 export function connect(
   address: string,
-  authToken?: string
+  authToken?: string,
+  keepaliveTimeout?: number
 ): Promise<Worterbuch> {
   return new Promise((res, rej) => {
     try {
-      startWebsocket(res, rej, address, authToken);
+      startWebsocket(res, rej, address, authToken, keepaliveTimeout);
     } catch (err) {
       rej(err);
     }
@@ -251,10 +252,14 @@ function startWebsocket(
   res: (value: Worterbuch | PromiseLike<Worterbuch>) => void,
   rej: (reason?: any) => void,
   address: string,
-  authToken: string | undefined
+  authToken: string | undefined,
+  keepaliveTimeout: number | undefined
 ) {
   let MAX_LAG = 5_000;
-  if (
+
+  if (keepaliveTimeout !== undefined) {
+    MAX_LAG = keepaliveTimeout * 1_000;
+  } else if (
     typeof process === "object" &&
     process.env !== undefined &&
     process.env.WORTERBUCH_KEEPALIVE_TIMEOUT !== undefined
