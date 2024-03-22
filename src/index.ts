@@ -268,6 +268,26 @@ function startWebsocket(
       );
     }
   }
+  if (typeof window !== "undefined" && window?.localStorage) {
+    const timeoutItem = window.localStorage.getItem(
+      "worterbuch.keepalive.timeout"
+    );
+    if (timeoutItem != null) {
+      try {
+        const timeout = JSON.parse(timeoutItem);
+        if (typeof timeout === "number") {
+          MAX_LAG = timeout * 1_000;
+        } else {
+          throw new Error("stored timeout is not a number");
+        }
+      } catch (err: any) {
+        console.warn(
+          "Could not load keepalive timeout from storage:",
+          err.message
+        );
+      }
+    }
+  }
 
   let keepalive: NodeJS.Timeout | number;
   let lastMsgReceived: number;
