@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import WebSocket from "isomorphic-ws";
 import { sha256 } from "js-sha256";
+import { CloseEvent, Socket } from "./socket";
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["0.7"];
+const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export type Key = string;
 export type RequestPattern = string;
@@ -199,9 +200,9 @@ export type Worterbuch = {
   ) => TransactionID;
   unsubscribeLs: (transactionID: TransactionID) => void;
   close: () => void;
-  onclose?: (event: CloseEvent) => any;
+  onclose?: (event?: CloseEvent) => any;
   onerror?: (event: Err) => any;
-  onwserror?: (event: Event) => any;
+  onwserror?: (event?: Event) => any;
   onmessage?: (msg: ServerMessage) => any;
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
@@ -301,9 +302,20 @@ function startWebsocket(
   let connected = false;
   let closing = false;
 
-  console.log("Connecting to Worterbuch server " + address + " …");
+  const result = URL_REGEX.exec(address);
+  if (!result) {
+    throw new Error("Invalid URL: " + address);
+  }
 
-  const socket = new WebSocket(address);
+  const proto = result[1];
+  const host = result[2];
+  const port = result[3] || defaultPort(proto);
+  const path = result[4] || "";
+
+  const client =
+    proto === "tcp" ? require("./tcpSocket") : require("./webSocket");
+
+  const socket = client.connect(proto, host, port, path);
 
   const close = () => {
     closing = true;
@@ -584,7 +596,7 @@ function startWebsocket(
     const lag = lastMsgSent - lastMsgReceived;
     if (lag >= 2000) {
       if (closing) {
-        if (socket.readyState === 2 || socket.readyState === 3) {
+        if (!socket.isClosed()) {
           console.error("Clean disconnect failed, terminating connection.");
           if (socket.onerror) {
             socket.onerror();
@@ -596,7 +608,7 @@ function startWebsocket(
           return;
         }
         console.log(
-          `Waiting for websocket to close (ready state: ${socket.readyState}) …`
+          `Waiting for websocket to close (closed: ${socket.isClosed()}) …`
         );
         return;
       }
@@ -662,24 +674,24 @@ function startWebsocket(
     setLastWill,
   };
 
-  socket.onopen = (e: Event) => {
+  socket.onopen = (e?: Event) => {
     console.log("Connected to server.");
     state.connected = true;
   };
 
-  socket.onclose = (e: CloseEvent) => {
+  socket.onclose = (e?: CloseEvent) => {
     if (connected) {
       if (closing) {
         console.log("Connection to server closed.");
       } else {
         console.error(
-          `Connection to server was closed unexpectedly (code: ${e.code}): ${e.reason}`
+          `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
         );
       }
     } else {
       rej(
         new Error(
-          `Connection to server was closed unexpectedly (code: ${e.code}): ${e.reason}`
+          `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
         )
       );
     }
@@ -690,7 +702,7 @@ function startWebsocket(
     }
   };
 
-  socket.onerror = (e: Event) => {
+  socket.onerror = (e?: Event) => {
     if (connection.onwserror) {
       connection.onwserror(e);
     } else {
@@ -948,9 +960,9 @@ function startWebsocket(
     res(connection);
   };
 
-  socket.onmessage = async (e: MessageEvent) => {
+  socket.onmessage = async (e: string) => {
     lastMsgReceived = Date.now();
-    const msg: ServerMessage = decode_server_message(e.data);
+    const msg: ServerMessage = decode_server_message(e);
 
     if (connection.onmessage) {
       connection.onmessage(msg);
@@ -970,4 +982,14 @@ function startWebsocket(
       processAuthenticatedMsg(<AuthenticatedMsg>msg);
     }
   };
+}
+
+function defaultPort(proto: string) {
+  if (proto === "wss") {
+    return 443;
+  }
+  if (proto === "tcp") {
+    return 8081;
+  }
+  return 80;
 }
