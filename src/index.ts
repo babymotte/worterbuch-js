@@ -202,7 +202,7 @@ export type Worterbuch = {
   close: () => void;
   onclose?: (event?: CloseEvent) => any;
   onerror?: (event: Err) => any;
-  onwserror?: (event?: Event) => any;
+  onwserror?: (event?: Event | Error) => any;
   onmessage?: (msg: ServerMessage) => any;
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
@@ -309,679 +309,683 @@ function startWebsocket(
 
   const proto = result[1];
   const host = result[2];
-  const port = result[3] || defaultPort(proto);
+  const port = parseInt(result[3]) || defaultPort(proto);
   const path = result[4] || "";
 
   const client =
-    proto === "tcp" ? require("./tcpSocket") : require("./webSocket");
+    proto === "tcp" ? import("./tcpSocket") : import("./webSocket");
+  client.then((c) => {
+    const connect = c.default;
+    const socket = connect(proto, host, port, path);
 
-  const socket = client.connect(proto, host, port, path);
+    const close = () => {
+      closing = true;
+      socket.close();
+    };
 
-  const close = () => {
-    closing = true;
-    socket.close();
-  };
+    const sendMsg = (msg: ClientMessage, socket: any) => {
+      const buf = encode_client_message(msg);
+      socket.send(buf);
+      lastMsgSent = Date.now();
+    };
 
-  const sendMsg = (msg: ClientMessage, socket: any) => {
-    const buf = encode_client_message(msg);
-    socket.send(buf);
-    lastMsgSent = Date.now();
-  };
+    const authenticate = (clientId: string) => {
+      if (authToken) {
+        const salted = clientId + authToken;
+        const hash = sha256.create();
+        hash.update(salted);
+        const token = hash.hex();
+        const msg = { authenticationRequest: { authToken: token } };
+        sendMsg(msg, socket);
+      } else {
+        connected = false;
+        rej(
+          new Error(
+            "Server requires authentication but no auth token was provided."
+          )
+        );
+        close();
+      }
+    };
 
-  const authenticate = (clientId: string) => {
-    if (authToken) {
-      const salted = clientId + authToken;
-      const hash = sha256.create();
-      hash.update(salted);
-      const token = hash.hex();
-      const msg = { authenticationRequest: { authToken: token } };
+    const state = {
+      transactionId: 1,
+      connected: false,
+    };
+
+    const nextTransactionId = () => {
+      return state.transactionId++;
+    };
+
+    const pendingGets = new Map<
+      TransactionID,
+      [GetCallback, Rejection | undefined]
+    >();
+    const pendingPGets = new Map<
+      TransactionID,
+      [PGetCallback, Rejection | undefined]
+    >();
+    const pendingDeletes = new Map<
+      TransactionID,
+      [DeleteCallback, Rejection | undefined]
+    >();
+    const pendingPDeletes = new Map<
+      TransactionID,
+      [PDeleteCallback, Rejection | undefined]
+    >();
+    const pendingLsStates = new Map<
+      TransactionID,
+      [LsCallback, Rejection | undefined]
+    >();
+    const subscriptions = new Map<
+      TransactionID,
+      [StateCallback, Rejection | undefined]
+    >();
+    const psubscriptions = new Map<
+      TransactionID,
+      [PStateCallback, Rejection | undefined]
+    >();
+    const lssubscriptions = new Map<
+      TransactionID,
+      [LsCallback, Rejection | undefined]
+    >();
+
+    const get = (key: Key): Promise<Value | null> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        getAsync(key, resolve, reject);
+      });
+    };
+
+    const getAsync = (
+      key: Key,
+      onmessage?: GetCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { get: { transactionId, key } };
       sendMsg(msg, socket);
-    } else {
-      connected = false;
-      rej(
-        new Error(
-          "Server requires authentication but no auth token was provided."
-        )
-      );
-      close();
-    }
-  };
-
-  const state = {
-    transactionId: 1,
-    connected: false,
-  };
-
-  const nextTransactionId = () => {
-    return state.transactionId++;
-  };
-
-  const pendingGets = new Map<
-    TransactionID,
-    [GetCallback, Rejection | undefined]
-  >();
-  const pendingPGets = new Map<
-    TransactionID,
-    [PGetCallback, Rejection | undefined]
-  >();
-  const pendingDeletes = new Map<
-    TransactionID,
-    [DeleteCallback, Rejection | undefined]
-  >();
-  const pendingPDeletes = new Map<
-    TransactionID,
-    [PDeleteCallback, Rejection | undefined]
-  >();
-  const pendingLsStates = new Map<
-    TransactionID,
-    [LsCallback, Rejection | undefined]
-  >();
-  const subscriptions = new Map<
-    TransactionID,
-    [StateCallback, Rejection | undefined]
-  >();
-  const psubscriptions = new Map<
-    TransactionID,
-    [PStateCallback, Rejection | undefined]
-  >();
-  const lssubscriptions = new Map<
-    TransactionID,
-    [LsCallback, Rejection | undefined]
-  >();
-
-  const get = (key: Key): Promise<Value | null> => {
-    return new Promise((resolve, reject) => {
-      // TODO reject after timeout?
-      getAsync(key, resolve, reject);
-    });
-  };
-
-  const getAsync = (
-    key: Key,
-    onmessage?: GetCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { get: { transactionId, key } };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      pendingGets.set(transactionId, [onmessage, onerror]);
-    }
-    return transactionId;
-  };
-
-  const pGet = (requestPattern: RequestPattern): Promise<KeyValuePairs> => {
-    return new Promise((resolve, reject) => {
-      // TODO reject after timeout?
-      pGetAsync(requestPattern, resolve, reject);
-    });
-  };
-
-  const pGetAsync = (
-    requestPattern: RequestPattern,
-    onmessage?: PGetCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { pGet: { transactionId, requestPattern } };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      pendingPGets.set(transactionId, [onmessage, onerror]);
-    }
-    return transactionId;
-  };
-
-  const del = (key: Key): Promise<Value | null> => {
-    return new Promise((resolve, reject) => {
-      // TODO reject after timeout?
-      deleteAsync(key, resolve, reject);
-    });
-  };
-
-  const deleteAsync = (
-    key: Key,
-    onmessage?: DeleteCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { delete: { transactionId, key } };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      pendingDeletes.set(transactionId, [onmessage, onerror]);
-    }
-    return transactionId;
-  };
-
-  const pDelete = (requestPattern: RequestPattern): Promise<KeyValuePairs> => {
-    return new Promise((resolve, reject) => {
-      // TODO reject after timeout?
-      pDeleteAsync(requestPattern, resolve, reject);
-    });
-  };
-
-  const pDeleteAsync = (
-    requestPattern: RequestPattern,
-    onmessage?: PDeleteCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { pDelete: { transactionId, requestPattern } };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      pendingPDeletes.set(transactionId, [onmessage, onerror]);
-    }
-    return transactionId;
-  };
-
-  const set = (key: Key, value: Value): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { set: { transactionId, key, value } };
-    sendMsg(msg, socket);
-    return transactionId;
-  };
-
-  const publish = (key: Key, value: Value): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { publish: { transactionId, key, value } };
-    sendMsg(msg, socket);
-    return transactionId;
-  };
-
-  const subscribe = (
-    key: Key,
-    onmessage?: StateCallback,
-    unique?: boolean,
-    liveOnly?: boolean,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = {
-      subscribe: {
-        transactionId,
-        key,
-        unique: unique || false,
-        liveOnly: liveOnly || false,
-      },
+      if (onmessage) {
+        pendingGets.set(transactionId, [onmessage, onerror]);
+      }
+      return transactionId;
     };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      subscriptions.set(transactionId, [onmessage, onerror]);
-    }
 
-    return transactionId;
-  };
-
-  const pSubscribe = (
-    requestPattern: RequestPattern,
-    onmessage?: PStateCallback,
-    unique?: boolean,
-    liveOnly?: boolean,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = {
-      pSubscribe: {
-        transactionId,
-        requestPattern,
-        unique: unique || false,
-        liveOnly: liveOnly || false,
-      },
+    const pGet = (requestPattern: RequestPattern): Promise<KeyValuePairs> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        pGetAsync(requestPattern, resolve, reject);
+      });
     };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      psubscriptions.set(transactionId, [onmessage, onerror]);
-    }
 
-    return transactionId;
-  };
-
-  const unsubscribe = (transactionId: TransactionID) => {
-    subscriptions.delete(transactionId);
-    psubscriptions.delete(transactionId);
-
-    const msg = {
-      unsubscribe: { transactionId },
+    const pGetAsync = (
+      requestPattern: RequestPattern,
+      onmessage?: PGetCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { pGet: { transactionId, requestPattern } };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        pendingPGets.set(transactionId, [onmessage, onerror]);
+      }
+      return transactionId;
     };
-    sendMsg(msg, socket);
-  };
 
-  const ls = (parent?: string): Promise<Children> => {
-    return new Promise((resolve, reject) => {
-      // TODO reject after timeout?
-      lsAsync(parent, resolve, reject);
-    });
-  };
-
-  const lsAsync = (
-    parent?: string,
-    callback?: LsCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = { ls: { transactionId, parent } };
-    sendMsg(msg, socket);
-    if (callback) {
-      pendingLsStates.set(transactionId, [callback, onerror]);
-    }
-    return transactionId;
-  };
-
-  const subscribeLs = (
-    parent?: string,
-    onmessage?: LsCallback,
-    onerror?: Rejection
-  ): TransactionID => {
-    const transactionId = nextTransactionId();
-    const msg = {
-      subscribeLs: { transactionId, parent },
+    const del = (key: Key): Promise<Value | null> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        deleteAsync(key, resolve, reject);
+      });
     };
-    sendMsg(msg, socket);
-    if (onmessage) {
-      lssubscriptions.set(transactionId, [onmessage, onerror]);
-    }
 
-    return transactionId;
-  };
-
-  const unsubscribeLs = (transactionId: TransactionID) => {
-    lssubscriptions.delete(transactionId);
-
-    const msg = {
-      unsubscribeLs: { transactionId },
+    const deleteAsync = (
+      key: Key,
+      onmessage?: DeleteCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { delete: { transactionId, key } };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        pendingDeletes.set(transactionId, [onmessage, onerror]);
+      }
+      return transactionId;
     };
-    sendMsg(msg, socket);
-  };
 
-  const checkKeepalive = () => {
-    const lag = lastMsgSent - lastMsgReceived;
-    if (lag >= 2000) {
-      if (closing) {
-        if (!socket.isClosed()) {
-          console.error("Clean disconnect failed, terminating connection.");
-          if (socket.onerror) {
-            socket.onerror();
+    const pDelete = (
+      requestPattern: RequestPattern
+    ): Promise<KeyValuePairs> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        pDeleteAsync(requestPattern, resolve, reject);
+      });
+    };
+
+    const pDeleteAsync = (
+      requestPattern: RequestPattern,
+      onmessage?: PDeleteCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { pDelete: { transactionId, requestPattern } };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        pendingPDeletes.set(transactionId, [onmessage, onerror]);
+      }
+      return transactionId;
+    };
+
+    const set = (key: Key, value: Value): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { set: { transactionId, key, value } };
+      sendMsg(msg, socket);
+      return transactionId;
+    };
+
+    const publish = (key: Key, value: Value): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { publish: { transactionId, key, value } };
+      sendMsg(msg, socket);
+      return transactionId;
+    };
+
+    const subscribe = (
+      key: Key,
+      onmessage?: StateCallback,
+      unique?: boolean,
+      liveOnly?: boolean,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        subscribe: {
+          transactionId,
+          key,
+          unique: unique || false,
+          liveOnly: liveOnly || false,
+        },
+      };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        subscriptions.set(transactionId, [onmessage, onerror]);
+      }
+
+      return transactionId;
+    };
+
+    const pSubscribe = (
+      requestPattern: RequestPattern,
+      onmessage?: PStateCallback,
+      unique?: boolean,
+      liveOnly?: boolean,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        pSubscribe: {
+          transactionId,
+          requestPattern,
+          unique: unique || false,
+          liveOnly: liveOnly || false,
+        },
+      };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        psubscriptions.set(transactionId, [onmessage, onerror]);
+      }
+
+      return transactionId;
+    };
+
+    const unsubscribe = (transactionId: TransactionID) => {
+      subscriptions.delete(transactionId);
+      psubscriptions.delete(transactionId);
+
+      const msg = {
+        unsubscribe: { transactionId },
+      };
+      sendMsg(msg, socket);
+    };
+
+    const ls = (parent?: string): Promise<Children> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        lsAsync(parent, resolve, reject);
+      });
+    };
+
+    const lsAsync = (
+      parent?: string,
+      callback?: LsCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { ls: { transactionId, parent } };
+      sendMsg(msg, socket);
+      if (callback) {
+        pendingLsStates.set(transactionId, [callback, onerror]);
+      }
+      return transactionId;
+    };
+
+    const subscribeLs = (
+      parent?: string,
+      onmessage?: LsCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        subscribeLs: { transactionId, parent },
+      };
+      sendMsg(msg, socket);
+      if (onmessage) {
+        lssubscriptions.set(transactionId, [onmessage, onerror]);
+      }
+
+      return transactionId;
+    };
+
+    const unsubscribeLs = (transactionId: TransactionID) => {
+      lssubscriptions.delete(transactionId);
+
+      const msg = {
+        unsubscribeLs: { transactionId },
+      };
+      sendMsg(msg, socket);
+    };
+
+    const checkKeepalive = () => {
+      const lag = lastMsgSent - lastMsgReceived;
+      if (lag >= 2000) {
+        if (closing) {
+          if (!socket.isClosed()) {
+            console.error("Clean disconnect failed, terminating connection.");
+            if (socket.onerror) {
+              socket.onerror();
+            }
+            if (socket.onclose) {
+              socket.onclose();
+            }
+            clearInterval(keepalive);
+            return;
           }
-          if (socket.onclose) {
-            socket.onclose();
-          }
-          clearInterval(keepalive);
+          console.log(
+            `Waiting for websocket to close (closed: ${socket.isClosed()}) …`
+          );
           return;
         }
-        console.log(
-          `Waiting for websocket to close (closed: ${socket.isClosed()}) …`
+        console.warn(
+          `Server has been inactive for ${Math.round(
+            (lastMsgSent - lastMsgReceived) / 1000
+          )} seconds.`
         );
-        return;
       }
-      console.warn(
-        `Server has been inactive for ${Math.round(
-          (lastMsgSent - lastMsgReceived) / 1000
-        )} seconds.`
-      );
-    }
-    if (lag >= MAX_LAG) {
-      console.log("Server has been inactive for too long. Disconnecting …");
-      close();
-    }
-  };
+      if (lag >= MAX_LAG) {
+        console.log("Server has been inactive for too long. Disconnecting …");
+        close();
+      }
+    };
 
-  const clientIdHolder = { clientId: "" };
-  const clientId = () => clientIdHolder.clientId;
+    const clientIdHolder = { clientId: "" };
+    const clientId = () => clientIdHolder.clientId;
 
-  const graveGoods = async () => {
-    const it = await get(`$SYS/clients/${clientId()}/graveGoods`);
-    return (it as string[]) || [];
-  };
+    const graveGoods = async () => {
+      const it = await get(`$SYS/clients/${clientId()}/graveGoods`);
+      return (it as string[]) || [];
+    };
 
-  const lastWill = async () => {
-    const it = await get(`$SYS/clients/${clientId()}/lastWill`);
-    return (it as KeyValuePairs) || [];
-  };
+    const lastWill = async () => {
+      const it = await get(`$SYS/clients/${clientId()}/lastWill`);
+      return (it as KeyValuePairs) || [];
+    };
 
-  const setGraveGoods = (graveGoods: string[] | undefined) => {
-    if (!graveGoods) {
-      del(`$SYS/clients/${clientId()}/graveGoods`);
-    } else {
-      set(`$SYS/clients/${clientId()}/graveGoods`, graveGoods);
-    }
-  };
-
-  const setLastWill = (lastWill: KeyValuePairs | undefined) => {
-    if (!lastWill) {
-      del(`$SYS/clients/${clientId()}/lastWill`);
-    } else {
-      set(`$SYS/clients/${clientId()}/lastWill`, lastWill);
-    }
-  };
-
-  const connection: Worterbuch = {
-    clientId,
-    get,
-    pGet,
-    delete: del,
-    pDelete,
-    set,
-    publish,
-    subscribe,
-    pSubscribe,
-    unsubscribe,
-    ls,
-    subscribeLs,
-    unsubscribeLs,
-    close,
-    graveGoods,
-    lastWill,
-    setGraveGoods,
-    setLastWill,
-  };
-
-  socket.onopen = (e?: Event) => {
-    console.log("Connected to server.");
-    state.connected = true;
-  };
-
-  socket.onclose = (e?: CloseEvent) => {
-    if (connected) {
-      if (closing) {
-        console.log("Connection to server closed.");
+    const setGraveGoods = (graveGoods: string[] | undefined) => {
+      if (!graveGoods) {
+        del(`$SYS/clients/${clientId()}/graveGoods`);
       } else {
-        console.error(
-          `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
+        set(`$SYS/clients/${clientId()}/graveGoods`, graveGoods);
+      }
+    };
+
+    const setLastWill = (lastWill: KeyValuePairs | undefined) => {
+      if (!lastWill) {
+        del(`$SYS/clients/${clientId()}/lastWill`);
+      } else {
+        set(`$SYS/clients/${clientId()}/lastWill`, lastWill);
+      }
+    };
+
+    const connection: Worterbuch = {
+      clientId,
+      get,
+      pGet,
+      delete: del,
+      pDelete,
+      set,
+      publish,
+      subscribe,
+      pSubscribe,
+      unsubscribe,
+      ls,
+      subscribeLs,
+      unsubscribeLs,
+      close,
+      graveGoods,
+      lastWill,
+      setGraveGoods,
+      setLastWill,
+    };
+
+    socket.onopen = (e?: Event) => {
+      console.log("Connected to server.");
+      state.connected = true;
+    };
+
+    socket.onclose = (e?: CloseEvent) => {
+      if (connected) {
+        if (closing) {
+          console.log("Connection to server closed.");
+        } else {
+          console.error(
+            `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
+          );
+        }
+      } else {
+        rej(
+          new Error(
+            `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
+          )
         );
       }
-    } else {
-      rej(
-        new Error(
-          `Connection to server was closed unexpectedly (code: ${e?.code}): ${e?.reason}`
-        )
-      );
-    }
-    clearInterval(keepalive);
-    state.connected = false;
-    if (connection.onclose) {
-      connection.onclose(e);
-    }
-  };
+      clearInterval(keepalive);
+      state.connected = false;
+      if (connection.onclose) {
+        connection.onclose(e);
+      }
+    };
 
-  socket.onerror = (e?: Event) => {
-    if (connection.onwserror) {
-      connection.onwserror(e);
-    } else {
-      console.error("Error in websocket connection.");
-    }
-    if (!connected) {
-      rej(e);
-      close();
-    }
-  };
+    socket.onerror = (e?: Event | Error) => {
+      if (connection.onwserror) {
+        connection.onwserror(e);
+      } else {
+        console.error("Error in websocket connection.");
+      }
+      if (!connected) {
+        rej(e);
+        close();
+      }
+    };
 
-  const sendKeepalive = () => {
-    socket.send(JSON.stringify(""));
-    lastMsgSent = Date.now();
-  };
+    const sendKeepalive = () => {
+      socket.send(JSON.stringify(""));
+      lastMsgSent = Date.now();
+    };
 
-  const processStateMsg = (msg: StateMsg) => {
-    const { transactionId, keyValue, deleted } = msg.state;
+    const processStateMsg = (msg: StateMsg) => {
+      const { transactionId, keyValue, deleted } = msg.state;
 
-    if (keyValue) {
+      if (keyValue) {
+        const pendingGet = pendingGets.get(transactionId);
+        if (pendingGet) {
+          pendingGets.delete(transactionId);
+          pendingGet[0](keyValue.value);
+        }
+      }
+
+      if (deleted) {
+        const pendingDelete = pendingDeletes.get(transactionId);
+        if (pendingDelete) {
+          pendingDeletes.delete(transactionId);
+          pendingDelete[0](deleted.value);
+        }
+      }
+
+      const event = keyValue
+        ? { value: keyValue.value }
+        : deleted
+        ? { deleted: deleted.value }
+        : undefined;
+
+      if (event) {
+        const subscription = subscriptions.get(transactionId);
+        if (subscription) {
+          subscription[0](event);
+        }
+      }
+    };
+
+    const processLsStateMsg = (msg: LsStateMsg) => {
+      const { transactionId, children } = msg.lsState;
+
+      const pending = pendingLsStates.get(transactionId);
+      if (pending) {
+        pendingLsStates.delete(transactionId);
+        pending[0](children);
+      }
+
+      const subscription = lssubscriptions.get(transactionId);
+      if (subscription) {
+        subscription[0](children);
+      }
+    };
+
+    const processPStateMsg = (msg: PStateMsg) => {
+      const transactionId = msg.pState.transactionId;
+      const keyValuePairs = msg.pState.keyValuePairs;
+      const deleted = msg.pState.deleted;
+
+      if (keyValuePairs) {
+        const pendingPGet = pendingPGets.get(transactionId);
+        if (pendingPGet) {
+          pendingPGets.delete(transactionId);
+          pendingPGet[0](keyValuePairs);
+        }
+      }
+
+      if (deleted) {
+        const pendingPDelete = pendingPDeletes.get(transactionId);
+        if (pendingPDelete) {
+          pendingPDeletes.delete(transactionId);
+          pendingPDelete[0](deleted);
+        }
+      }
+
+      const event = keyValuePairs
+        ? { keyValuePairs }
+        : deleted
+        ? { deleted }
+        : undefined;
+
+      if (event) {
+        const subscription = psubscriptions.get(transactionId);
+        if (subscription) {
+          subscription[0](event);
+        }
+      }
+    };
+
+    const processErrMsg = (msg: ErrMsg) => {
+      const transactionId = msg.err.transactionId;
+
       const pendingGet = pendingGets.get(transactionId);
       if (pendingGet) {
         pendingGets.delete(transactionId);
-        pendingGet[0](keyValue.value);
+        let [resolve, reject] = pendingGet;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve(null);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in get with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-    }
 
-    if (deleted) {
       const pendingDelete = pendingDeletes.get(transactionId);
       if (pendingDelete) {
         pendingDeletes.delete(transactionId);
-        pendingDelete[0](deleted.value);
+        let [resolve, reject] = pendingDelete;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve(null);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in delete with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-    }
 
-    const event = keyValue
-      ? { value: keyValue.value }
-      : deleted
-      ? { deleted: deleted.value }
-      : undefined;
-
-    if (event) {
-      const subscription = subscriptions.get(transactionId);
-      if (subscription) {
-        subscription[0](event);
-      }
-    }
-  };
-
-  const processLsStateMsg = (msg: LsStateMsg) => {
-    const { transactionId, children } = msg.lsState;
-
-    const pending = pendingLsStates.get(transactionId);
-    if (pending) {
-      pendingLsStates.delete(transactionId);
-      pending[0](children);
-    }
-
-    const subscription = lssubscriptions.get(transactionId);
-    if (subscription) {
-      subscription[0](children);
-    }
-  };
-
-  const processPStateMsg = (msg: PStateMsg) => {
-    const transactionId = msg.pState.transactionId;
-    const keyValuePairs = msg.pState.keyValuePairs;
-    const deleted = msg.pState.deleted;
-
-    if (keyValuePairs) {
       const pendingPGet = pendingPGets.get(transactionId);
       if (pendingPGet) {
         pendingPGets.delete(transactionId);
-        pendingPGet[0](keyValuePairs);
+        if (pendingPGet[1]) {
+          pendingPGet[1](msg.err);
+        } else {
+          console.error(
+            `Error in pget with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-    }
 
-    if (deleted) {
       const pendingPDelete = pendingPDeletes.get(transactionId);
       if (pendingPDelete) {
         pendingPDeletes.delete(transactionId);
-        pendingPDelete[0](deleted);
+        if (pendingPDelete[1]) {
+          pendingPDelete[1](msg.err);
+        } else {
+          console.error(
+            `Error in pdelete with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-    }
 
-    const event = keyValuePairs
-      ? { keyValuePairs }
-      : deleted
-      ? { deleted }
-      : undefined;
+      const pendingLs = pendingLsStates.get(transactionId);
+      if (pendingLs) {
+        pendingLsStates.delete(transactionId);
+        let [resolve, reject] = pendingLs;
+        if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
+          resolve([]);
+        } else if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in ls with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
 
-    if (event) {
-      const subscription = psubscriptions.get(transactionId);
+      const subscription = subscriptions.get(transactionId);
       if (subscription) {
-        subscription[0](event);
+        subscriptions.delete(transactionId);
+        if (subscription[1]) {
+          subscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in subscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
       }
-    }
-  };
 
-  const processErrMsg = (msg: ErrMsg) => {
-    const transactionId = msg.err.transactionId;
+      const psubscription = psubscriptions.get(transactionId);
+      if (psubscription) {
+        psubscriptions.delete(transactionId);
+        if (psubscription[1]) {
+          psubscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in psubscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
 
-    const pendingGet = pendingGets.get(transactionId);
-    if (pendingGet) {
-      pendingGets.delete(transactionId);
-      let [resolve, reject] = pendingGet;
-      if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
-        resolve(null);
-      } else if (reject) {
-        reject(msg.err);
+      const lssubscription = lssubscriptions.get(transactionId);
+      if (lssubscription) {
+        lssubscriptions.delete(transactionId);
+        if (lssubscription[1]) {
+          lssubscription[1](msg.err);
+        } else {
+          console.error(
+            `Error in lssubscription with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      if (connection.onerror) {
+        connection.onerror(msg.err);
       } else {
         console.error(
-          `Error in get with transaction ID '${transactionId}'`,
-          msg.err
+          `Received error code ${msg.err.errorCode} from server:`,
+          msg.err.metadata
         );
       }
-    }
+    };
 
-    const pendingDelete = pendingDeletes.get(transactionId);
-    if (pendingDelete) {
-      pendingDeletes.delete(transactionId);
-      let [resolve, reject] = pendingDelete;
-      if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
-        resolve(null);
-      } else if (reject) {
-        reject(msg.err);
+    const processWelcomeMsg = (msg: WelcomeMsg) => {
+      if (
+        SUPPORTED_PROTOCOL_VERSIONS.includes(msg.welcome.info.protocolVersion)
+      ) {
+        clientIdHolder.clientId = msg.welcome.clientId;
+        if (keepalive) {
+          clearInterval(keepalive);
+        }
+        keepalive = setInterval(() => {
+          checkKeepalive();
+          sendKeepalive();
+        }, 1000);
+        if (msg.welcome.info.authenticationRequired) {
+          authenticate(msg.welcome.clientId);
+        } else {
+          connected = true;
+          res(connection);
+        }
       } else {
-        console.error(
-          `Error in delete with transaction ID '${transactionId}'`,
-          msg.err
-        );
+        const err = `Protocol version ${msg.welcome.info.protocolVersion} is not supported by this client!`;
+        connected = false;
+        rej(new Error(err));
+        close();
       }
-    }
+    };
 
-    const pendingPGet = pendingPGets.get(transactionId);
-    if (pendingPGet) {
-      pendingPGets.delete(transactionId);
-      if (pendingPGet[1]) {
-        pendingPGet[1](msg.err);
-      } else {
-        console.error(
-          `Error in pget with transaction ID '${transactionId}'`,
-          msg.err
-        );
+    const processAuthenticatedMsg = (msg: AuthenticatedMsg) => {
+      console.info("Authentication successful.");
+      connected = true;
+      res(connection);
+    };
+
+    socket.onmessage = async (e: string) => {
+      lastMsgReceived = Date.now();
+      const msg: ServerMessage = decode_server_message(e);
+
+      if (connection.onmessage) {
+        connection.onmessage(msg);
       }
-    }
 
-    const pendingPDelete = pendingPDeletes.get(transactionId);
-    if (pendingPDelete) {
-      pendingPDeletes.delete(transactionId);
-      if (pendingPDelete[1]) {
-        pendingPDelete[1](msg.err);
-      } else {
-        console.error(
-          `Error in pdelete with transaction ID '${transactionId}'`,
-          msg.err
-        );
+      if ((<StateMsg>msg).state) {
+        processStateMsg(<StateMsg>msg);
+      } else if ((<PStateMsg>msg).pState) {
+        processPStateMsg(<PStateMsg>msg);
+      } else if ((<ErrMsg>msg).err) {
+        processErrMsg(<ErrMsg>msg);
+      } else if ((<LsStateMsg>msg).lsState) {
+        processLsStateMsg(<LsStateMsg>msg);
+      } else if ((<WelcomeMsg>msg).welcome) {
+        processWelcomeMsg(<WelcomeMsg>msg);
+      } else if ((<AuthenticatedMsg>msg).authenticated) {
+        processAuthenticatedMsg(<AuthenticatedMsg>msg);
       }
-    }
-
-    const pendingLs = pendingLsStates.get(transactionId);
-    if (pendingLs) {
-      pendingLsStates.delete(transactionId);
-      let [resolve, reject] = pendingLs;
-      if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
-        resolve([]);
-      } else if (reject) {
-        reject(msg.err);
-      } else {
-        console.error(
-          `Error in ls with transaction ID '${transactionId}'`,
-          msg.err
-        );
-      }
-    }
-
-    const subscription = subscriptions.get(transactionId);
-    if (subscription) {
-      subscriptions.delete(transactionId);
-      if (subscription[1]) {
-        subscription[1](msg.err);
-      } else {
-        console.error(
-          `Error in subscription with transaction ID '${transactionId}'`,
-          msg.err
-        );
-      }
-    }
-
-    const psubscription = psubscriptions.get(transactionId);
-    if (psubscription) {
-      psubscriptions.delete(transactionId);
-      if (psubscription[1]) {
-        psubscription[1](msg.err);
-      } else {
-        console.error(
-          `Error in psubscription with transaction ID '${transactionId}'`,
-          msg.err
-        );
-      }
-    }
-
-    const lssubscription = lssubscriptions.get(transactionId);
-    if (lssubscription) {
-      lssubscriptions.delete(transactionId);
-      if (lssubscription[1]) {
-        lssubscription[1](msg.err);
-      } else {
-        console.error(
-          `Error in lssubscription with transaction ID '${transactionId}'`,
-          msg.err
-        );
-      }
-    }
-
-    if (connection.onerror) {
-      connection.onerror(msg.err);
-    } else {
-      console.error(
-        `Received error code ${msg.err.errorCode} from server:`,
-        msg.err.metadata
-      );
-    }
-  };
-
-  const processWelcomeMsg = (msg: WelcomeMsg) => {
-    if (
-      SUPPORTED_PROTOCOL_VERSIONS.includes(msg.welcome.info.protocolVersion)
-    ) {
-      clientIdHolder.clientId = msg.welcome.clientId;
-      if (keepalive) {
-        clearInterval(keepalive);
-      }
-      keepalive = setInterval(() => {
-        checkKeepalive();
-        sendKeepalive();
-      }, 1000);
-      if (msg.welcome.info.authenticationRequired) {
-        authenticate(msg.welcome.clientId);
-      } else {
-        connected = true;
-        res(connection);
-      }
-    } else {
-      const err = `Protocol version ${msg.welcome.info.protocolVersion} is not supported by this client!`;
-      connected = false;
-      rej(new Error(err));
-      close();
-    }
-  };
-
-  const processAuthenticatedMsg = (msg: AuthenticatedMsg) => {
-    console.info("Authentication successful.");
-    connected = true;
-    res(connection);
-  };
-
-  socket.onmessage = async (e: string) => {
-    lastMsgReceived = Date.now();
-    const msg: ServerMessage = decode_server_message(e);
-
-    if (connection.onmessage) {
-      connection.onmessage(msg);
-    }
-
-    if ((<StateMsg>msg).state) {
-      processStateMsg(<StateMsg>msg);
-    } else if ((<PStateMsg>msg).pState) {
-      processPStateMsg(<PStateMsg>msg);
-    } else if ((<ErrMsg>msg).err) {
-      processErrMsg(<ErrMsg>msg);
-    } else if ((<LsStateMsg>msg).lsState) {
-      processLsStateMsg(<LsStateMsg>msg);
-    } else if ((<WelcomeMsg>msg).welcome) {
-      processWelcomeMsg(<WelcomeMsg>msg);
-    } else if ((<AuthenticatedMsg>msg).authenticated) {
-      processAuthenticatedMsg(<AuthenticatedMsg>msg);
-    }
-  };
+    };
+  });
 }
 
 function defaultPort(proto: string) {

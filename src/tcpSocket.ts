@@ -1,9 +1,7 @@
-import net from "net";
-import rl from "readline";
+import { Stream } from "stream";
 import { CloseEvent, Socket } from "./socket";
-import { log } from "console";
 
-export function connect(
+function connectReal(
   proto: string,
   host: string,
   port: number,
@@ -19,23 +17,25 @@ export function connect(
     isClosed: () => false,
   };
 
-  setTimeout(() => {
+  const net = typeof process !== "undefined" ? "net" : "net-browserify-stub";
+
+  import(net).then((net) => {
     const client = new net.Socket();
     console.log(`Connecting to TCP socket ${host}:${port} …`);
     client.connect(port, host, () => socket.onopen());
     emitLines(client);
-    client.on("line", (line) => socket.onmessage(line));
+    client.on("line", (line: string) => socket.onmessage(line));
     client.on("close", () => socket.onclose());
-    client.on("error", (e) => socket.onerror(e));
+    client.on("error", (e: Error) => socket.onerror(e));
     socket.send = (line: string) => client.write(line + "\n");
     socket.close = () => client.destroy();
     socket.isClosed = () => client.destroyed;
-  }, 0);
+  });
 
   return socket;
 }
 
-function emitLines(stream: net.Socket) {
+function emitLines(stream: Stream) {
   let backlog = "";
   stream.on("data", (data: Buffer) => {
     backlog += data;
@@ -52,3 +52,24 @@ function emitLines(stream: net.Socket) {
     }
   });
 }
+
+function connectDummy(
+  proto: string,
+  host: string,
+  port: number,
+  path: string
+): Socket {
+  return {
+    onopen: (e?: Event) => {},
+    onmessage: (msg: string) => {},
+    onerror: (e?: Event | Error) => {},
+    onclose: (e?: CloseEvent) => {},
+    send: (msg: string) => {},
+    close: () => {},
+    isClosed: () => false,
+  };
+}
+
+const connect = typeof process === "object" ? connectReal : connectDummy;
+
+export default connect;

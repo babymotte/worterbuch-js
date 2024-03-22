@@ -1,7 +1,7 @@
-import WebSocket from "isomorphic-ws";
 import { CloseEvent, Socket } from "./socket";
+import WebSocket from "isomorphic-ws";
 
-export function connect(
+export default function connect(
   proto: string,
   host: string,
   port: number,
@@ -17,7 +17,7 @@ export function connect(
     isClosed: () => false,
   };
 
-  setTimeout(() => {
+  setTimeout((ws) => {
     const addr = `${proto}://${host}:${port}/${path}`;
     console.log("Connecting to WebSocket", addr, "…");
     const client = new WebSocket(addr);

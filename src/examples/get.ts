@@ -1,7 +1,13 @@
 import { connect } from "./util";
 
 async function main() {
-  const wb = await connect();
+  let wb;
+  try {
+    wb = await connect();
+  } catch (err: any) {
+    console.error("Could not connect:", err.message);
+    return;
+  }
 
   wb.set("hello", "world");
 
