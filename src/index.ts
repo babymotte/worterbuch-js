@@ -19,26 +19,6 @@ import { sha256 } from "js-sha256";
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["0.7"];
 
-let MAX_LAG = 5_000;
-if (
-  typeof process === "object" &&
-  process.env !== undefined &&
-  process.env.WORTERBUCH_KEEPALIVE_TIMEOUT !== undefined
-) {
-  try {
-    MAX_LAG = parseInt(process.env.WORTERBUCH_KEEPALIVE_TIMEOUT) * 1_000;
-  } catch (e) {
-    console.error(
-      "Invalid value of WORTERBUCH_KEEPALIVE_TIMEOUT:",
-      process.env.WORTERBUCH_KEEPALIVE_TIMEOUT
-    );
-  }
-}
-
-let keepalive: NodeJS.Timeout | number;
-let lastMsgReceived: number;
-let lastMsgSent: number;
-
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
@@ -273,6 +253,26 @@ function startWebsocket(
   address: string,
   authToken: string | undefined
 ) {
+  let MAX_LAG = 5_000;
+  if (
+    typeof process === "object" &&
+    process.env !== undefined &&
+    process.env.WORTERBUCH_KEEPALIVE_TIMEOUT !== undefined
+  ) {
+    try {
+      MAX_LAG = parseInt(process.env.WORTERBUCH_KEEPALIVE_TIMEOUT) * 1_000;
+    } catch (e) {
+      console.error(
+        "Invalid value of WORTERBUCH_KEEPALIVE_TIMEOUT:",
+        process.env.WORTERBUCH_KEEPALIVE_TIMEOUT
+      );
+    }
+  }
+
+  let keepalive: NodeJS.Timeout | number;
+  let lastMsgReceived: number;
+  let lastMsgSent: number;
+
   let connected = false;
   let closing = false;
 
