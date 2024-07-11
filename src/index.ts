@@ -17,7 +17,7 @@
 import { sha256 } from "js-sha256";
 import { CloseEvent, Socket } from "./socket";
 
-const SUPPORTED_PROTOCOL_VERSIONS = ["0.7"];
+const SUPPORTED_PROTOCOL_VERSIONS = ["0.8"];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export type Key = string;
