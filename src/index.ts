@@ -209,6 +209,7 @@ export type Worterbuch = {
   lastWill: () => Promise<KeyValuePairs>;
   setGraveGoods: (graveGoods: string[] | undefined) => void;
   setLastWill: (lastWill: KeyValuePairs | undefined) => void;
+  setClientName: (clientName: string) => void;
 };
 
 export const ErrorCodes = {
@@ -656,6 +657,10 @@ function startWebsocket(
       }
     };
 
+    const setClientName = (clientName: string) => {
+      set(`$SYS/clients/${clientId()}/clientName`, clientName);
+    };
+
     const connection: Worterbuch = {
       clientId,
       get,
@@ -675,6 +680,7 @@ function startWebsocket(
       lastWill,
       setGraveGoods,
       setLastWill,
+      setClientName,
     };
 
     socket.onopen = (e?: Event) => {
