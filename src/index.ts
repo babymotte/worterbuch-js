@@ -17,7 +17,7 @@
 import { sha256 } from "js-sha256";
 import { CloseEvent, Socket } from "./socket";
 
-const SUPPORTED_PROTOCOL_VERSIONS = ["0.8"];
+const SUPPORTED_PROTOCOL_VERSIONS = ["0.9"];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export type Key = string;
@@ -92,6 +92,10 @@ export type Ls = {
   transactionId: number;
   parent?: string;
 };
+export type PLs = {
+  transactionId: number;
+  parentPattern?: string;
+};
 export type SubscribeLs = {
   transactionId: number;
   parent?: string;
@@ -141,6 +145,9 @@ export type UnsubMsg = {
 export type LsMsg = {
   ls: Ls;
 };
+export type PLsMsg = {
+  pLs: PLs;
+};
 export type SubscribeLsMsg = {
   subscribeLs: SubscribeLs;
 };
@@ -167,6 +174,7 @@ export type ClientMessage =
   | PSubMsg
   | UnsubMsg
   | LsMsg
+  | PLsMsg
   | SubscribeLsMsg
   | UnsubscribeLsMsg;
 
@@ -193,6 +201,7 @@ export type Worterbuch = {
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
   ls: (parent?: Key) => Promise<Children>;
+  pLs: (parent?: RequestPattern) => Promise<Children>;
   subscribeLs: (
     parent?: Key,
     callback?: LsCallback,
@@ -570,6 +579,27 @@ function startWebsocket(
       return transactionId;
     };
 
+    const pLs = (parentPattern?: RequestPattern): Promise<Children> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        pLsAsync(parentPattern, resolve, reject);
+      });
+    };
+
+    const pLsAsync = (
+      parentPattern?: RequestPattern,
+      callback?: LsCallback,
+      onerror?: Rejection
+    ): TransactionID => {
+      const transactionId = nextTransactionId();
+      const msg = { pLs: { transactionId, parentPattern } };
+      sendMsg(msg, socket);
+      if (callback) {
+        pendingLsStates.set(transactionId, [callback, onerror]);
+      }
+      return transactionId;
+    };
+
     const subscribeLs = (
       parent?: string,
       onmessage?: LsCallback,
@@ -673,6 +703,7 @@ function startWebsocket(
       pSubscribe,
       unsubscribe,
       ls,
+      pLs,
       subscribeLs,
       unsubscribeLs,
       close,
