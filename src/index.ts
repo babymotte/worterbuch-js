@@ -16,9 +16,12 @@
 
 import { sha256 } from "js-sha256";
 import { CloseEvent, Socket } from "./socket";
+import { WbError } from "./error";
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["0.9"];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
+
+export { WbError } from "./error";
 
 export type Key = string;
 export type RequestPattern = string;
@@ -873,7 +876,7 @@ function startWebsocket(
         if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
           resolve(null);
         } else if (reject) {
-          reject(msg.err);
+          reject(new WbError(msg.err));
         } else {
           console.error(
             `Error in get with transaction ID '${transactionId}'`,
@@ -889,7 +892,7 @@ function startWebsocket(
         if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
           resolve(null);
         } else if (reject) {
-          reject(msg.err);
+          reject(new WbError(msg.err));
         } else {
           console.error(
             `Error in delete with transaction ID '${transactionId}'`,
@@ -931,7 +934,7 @@ function startWebsocket(
         if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
           resolve([]);
         } else if (reject) {
-          reject(msg.err);
+          reject(new WbError(msg.err));
         } else {
           console.error(
             `Error in ls with transaction ID '${transactionId}'`,
@@ -945,7 +948,7 @@ function startWebsocket(
         pendingSets.delete(transactionId);
         let [_, reject] = pendingSet;
         if (reject) {
-          reject(msg.err);
+          reject(new WbError(msg.err));
         } else {
           console.error(
             `Error in set with transaction ID '${transactionId}'`,
@@ -959,7 +962,7 @@ function startWebsocket(
         pendingPublishes.delete(transactionId);
         let [_, reject] = pendingPublish;
         if (reject) {
-          reject(msg.err);
+          reject(new WbError(msg.err));
         } else {
           console.error(
             `Error in publish with transaction ID '${transactionId}'`,
