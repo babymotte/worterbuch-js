@@ -1,7 +1,7 @@
 import { connect as connectWB } from "../index";
 
-export async function connect() {
-  return await connectWB("tcp://localhost:8081/ws", "1234");
+export async function connect(authToken?: string) {
+  return await connectWB("tcp://localhost:8081/ws", authToken);
 }
 
 export async function sleep(seconds: number) {

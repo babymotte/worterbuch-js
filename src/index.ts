@@ -49,7 +49,7 @@ export type PStateCallback = (event: PStateEvent) => void;
 export type LsCallback = (children: Children) => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
-export type AuthenticationRequest = { authToken: string };
+export type AuthorizationRequest = { authToken: string };
 export type State = {
   transactionId: TransactionID;
   keyValue: KeyValuePair | undefined;
@@ -69,7 +69,7 @@ export type Err = {
 };
 export type ServerInfo = {
   protocolVersion: string;
-  authenticationRequired: boolean;
+  authorizationRequired: boolean;
 };
 export type Get = { transactionId: number; key: string };
 export type PGet = { transactionId: number; requestPattern: string };
@@ -108,12 +108,12 @@ export type StateMsg = { state: State };
 export type PStateMsg = { pState: PState };
 export type ErrMsg = { err: Err };
 export type WelcomeMsg = { welcome: Welcome };
-export type AuthenticatedMsg = { authenticated: Ack };
+export type AuthorizedMsg = { authorized: Ack };
 export type LsStateMsg = {
   lsState: LsState;
 };
-export type AuthenticationRequestMsg = {
-  authenticationRequest: AuthenticationRequest;
+export type AuthorizationRequestMsg = {
+  authorizationRequest: AuthorizationRequest;
 };
 export type SetMsg = {
   set: { transactionId: number; key: string; value: Value };
@@ -160,10 +160,10 @@ export type ServerMessage =
   | PStateMsg
   | ErrMsg
   | WelcomeMsg
-  | AuthenticatedMsg
+  | AuthorizedMsg
   | LsStateMsg;
 export type ClientMessage =
-  | AuthenticationRequestMsg
+  | AuthorizationRequestMsg
   | SetMsg
   | PubMsg
   | GetMsg
@@ -339,19 +339,15 @@ function startWebsocket(
       lastMsgSent = Date.now();
     };
 
-    const authenticate = (clientId: string) => {
+    const requestAuthorization = (clientId: string) => {
       if (authToken) {
-        const salted = clientId + authToken;
-        const hash = sha256.create();
-        hash.update(salted);
-        const token = hash.hex();
-        const msg = { authenticationRequest: { authToken: token } };
+        const msg = { authorizationRequest: { authToken } };
         sendMsg(msg, socket);
       } else {
         connected = false;
         rej(
           new Error(
-            "Server requires authentication but no auth token was provided."
+            "Server requires authorization but no auth token was provided."
           )
         );
         close();
@@ -980,8 +976,8 @@ function startWebsocket(
           checkKeepalive();
           sendKeepalive();
         }, 1000);
-        if (msg.welcome.info.authenticationRequired) {
-          authenticate(msg.welcome.clientId);
+        if (msg.welcome.info.authorizationRequired) {
+          requestAuthorization(msg.welcome.clientId);
         } else {
           connected = true;
           res(connection);
@@ -994,8 +990,8 @@ function startWebsocket(
       }
     };
 
-    const processAuthenticatedMsg = (msg: AuthenticatedMsg) => {
-      console.info("Authentication successful.");
+    const processAuthorizedMsg = (msg: AuthorizedMsg) => {
+      console.info("Authorization successful.");
       connected = true;
       res(connection);
     };
@@ -1018,8 +1014,8 @@ function startWebsocket(
         processLsStateMsg(<LsStateMsg>msg);
       } else if ((<WelcomeMsg>msg).welcome) {
         processWelcomeMsg(<WelcomeMsg>msg);
-      } else if ((<AuthenticatedMsg>msg).authenticated) {
-        processAuthenticatedMsg(<AuthenticatedMsg>msg);
+      } else if ((<AuthorizedMsg>msg).authorized) {
+        processAuthorizedMsg(<AuthorizedMsg>msg);
       }
     };
   });
