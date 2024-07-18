@@ -44,7 +44,7 @@ export type LsEvent = {
 };
 
 export type ErrorCallback = (err: Error) => void;
-export type GetCallback = (item: Value | null) => void;
+export type GetCallback = (item: Value | undefined) => void;
 export type DeleteCallback = GetCallback;
 export type PGetCallback = (items: KeyValuePairs) => void;
 export type PDeleteCallback = PGetCallback;
@@ -184,9 +184,9 @@ export type ClientMessage =
   | UnsubscribeLsMsg;
 
 export type Worterbuch = {
-  get: (key: Key) => Promise<Value | null>;
+  get: (key: Key) => Promise<Value | undefined>;
   pGet: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  delete: (key: Key) => Promise<Value | null>;
+  delete: (key: Key) => Promise<Value | undefined>;
   pDelete: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
   set: (key: Key, value: Value) => Promise<void>;
   publish: (key: Key, value: Value) => Promise<void>;
@@ -395,7 +395,7 @@ function startWebsocket(
       [LsCallback, Rejection | undefined]
     >();
 
-    const get = (key: Key): Promise<Value | null> => {
+    const get = (key: Key): Promise<Value | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         getAsync(key, resolve, reject);
@@ -433,7 +433,7 @@ function startWebsocket(
       return transactionId;
     };
 
-    const del = (key: Key): Promise<Value | null> => {
+    const del = (key: Key): Promise<Value | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         deleteAsync(key, resolve, reject);
@@ -874,7 +874,7 @@ function startWebsocket(
         pendingGets.delete(transactionId);
         let [resolve, reject] = pendingGet;
         if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
-          resolve(null);
+          resolve(undefined);
         } else if (reject) {
           reject(new WbError(msg.err));
         } else {
@@ -890,7 +890,7 @@ function startWebsocket(
         pendingDeletes.delete(transactionId);
         let [resolve, reject] = pendingDelete;
         if (msg.err.errorCode === ErrorCodes.NoSuchValue) {
-          resolve(null);
+          resolve(undefined);
         } else if (reject) {
           reject(new WbError(msg.err));
         } else {
