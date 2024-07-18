@@ -40,6 +40,7 @@ export type LsEvent = {
   children: Children;
 };
 
+export type ErrorCallback = (err: Error) => void;
 export type GetCallback = (item: Value | null) => void;
 export type DeleteCallback = GetCallback;
 export type PGetCallback = (items: KeyValuePairs) => void;
@@ -47,6 +48,7 @@ export type PDeleteCallback = PGetCallback;
 export type StateCallback = (event: StateEvent) => void;
 export type PStateCallback = (event: PStateEvent) => void;
 export type LsCallback = (children: Children) => void;
+export type AckCallback = () => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
 export type AuthorizationRequest = { authToken: string };
@@ -183,18 +185,18 @@ export type Worterbuch = {
   pGet: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
   delete: (key: Key) => Promise<Value | null>;
   pDelete: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  set: (key: Key, value: Value) => TransactionID;
-  publish: (key: Key, value: Value) => TransactionID;
+  set: (key: Key, value: Value) => Promise<void>;
+  publish: (key: Key, value: Value) => Promise<void>;
   subscribe: (
     key: Key,
-    callback?: StateCallback,
+    callback: StateCallback,
     unique?: boolean,
     liveOnly?: boolean,
     onerror?: Rejection
   ) => TransactionID;
   pSubscribe: (
     requestPattern: RequestPattern,
-    callback?: PStateCallback,
+    callback: PStateCallback,
     unique?: boolean,
     liveOnly?: boolean,
     onerror?: Rejection
@@ -203,19 +205,20 @@ export type Worterbuch = {
   ls: (parent?: Key) => Promise<Children>;
   pLs: (parent?: RequestPattern) => Promise<Children>;
   subscribeLs: (
-    parent?: Key,
-    callback?: LsCallback,
+    parent: Key | undefined,
+    callback: LsCallback,
     onerror?: Rejection
   ) => TransactionID;
   unsubscribeLs: (transactionID: TransactionID) => void;
   close: () => void;
   onclose?: (event?: CloseEvent) => any;
   onerror?: (event: Err) => any;
-  onwserror?: (event?: Event | Error) => any;
+  onconnectionerror?: (event?: Event | Error) => any;
   onmessage?: (msg: ServerMessage) => any;
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
   lastWill: () => Promise<KeyValuePairs>;
+  clientName: () => Promise<string | undefined>;
   setGraveGoods: (graveGoods: string[] | undefined) => void;
   setLastWill: (lastWill: KeyValuePairs | undefined) => void;
   setClientName: (clientName: string) => void;
@@ -363,26 +366,19 @@ function startWebsocket(
       return state.transactionId++;
     };
 
-    const pendingGets = new Map<
-      TransactionID,
-      [GetCallback, Rejection | undefined]
-    >();
-    const pendingPGets = new Map<
-      TransactionID,
-      [PGetCallback, Rejection | undefined]
-    >();
+    const pendingGets = new Map<TransactionID, [GetCallback, Rejection]>();
+    const pendingPGets = new Map<TransactionID, [PGetCallback, Rejection]>();
     const pendingDeletes = new Map<
       TransactionID,
-      [DeleteCallback, Rejection | undefined]
+      [DeleteCallback, Rejection]
     >();
     const pendingPDeletes = new Map<
       TransactionID,
-      [PDeleteCallback, Rejection | undefined]
+      [PDeleteCallback, Rejection]
     >();
-    const pendingLsStates = new Map<
-      TransactionID,
-      [LsCallback, Rejection | undefined]
-    >();
+    const pendingLsStates = new Map<TransactionID, [LsCallback, Rejection]>();
+    const pendingSets = new Map<TransactionID, [AckCallback, Rejection]>();
+    const pendingPublishes = new Map<TransactionID, [AckCallback, Rejection]>();
     const subscriptions = new Map<
       TransactionID,
       [StateCallback, Rejection | undefined]
@@ -405,15 +401,13 @@ function startWebsocket(
 
     const getAsync = (
       key: Key,
-      onmessage?: GetCallback,
-      onerror?: Rejection
+      onmessage: GetCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { get: { transactionId, key } };
       sendMsg(msg, socket);
-      if (onmessage) {
-        pendingGets.set(transactionId, [onmessage, onerror]);
-      }
+      pendingGets.set(transactionId, [onmessage, onerror]);
       return transactionId;
     };
 
@@ -426,15 +420,13 @@ function startWebsocket(
 
     const pGetAsync = (
       requestPattern: RequestPattern,
-      onmessage?: PGetCallback,
-      onerror?: Rejection
+      onmessage: PGetCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pGet: { transactionId, requestPattern } };
       sendMsg(msg, socket);
-      if (onmessage) {
-        pendingPGets.set(transactionId, [onmessage, onerror]);
-      }
+      pendingPGets.set(transactionId, [onmessage, onerror]);
       return transactionId;
     };
 
@@ -447,15 +439,13 @@ function startWebsocket(
 
     const deleteAsync = (
       key: Key,
-      onmessage?: DeleteCallback,
-      onerror?: Rejection
+      onmessage: DeleteCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { delete: { transactionId, key } };
       sendMsg(msg, socket);
-      if (onmessage) {
-        pendingDeletes.set(transactionId, [onmessage, onerror]);
-      }
+      pendingDeletes.set(transactionId, [onmessage, onerror]);
       return transactionId;
     };
 
@@ -470,35 +460,59 @@ function startWebsocket(
 
     const pDeleteAsync = (
       requestPattern: RequestPattern,
-      onmessage?: PDeleteCallback,
-      onerror?: Rejection
+      onmessage: PDeleteCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pDelete: { transactionId, requestPattern } };
+      pendingPDeletes.set(transactionId, [onmessage, onerror]);
       sendMsg(msg, socket);
-      if (onmessage) {
-        pendingPDeletes.set(transactionId, [onmessage, onerror]);
-      }
       return transactionId;
     };
 
-    const set = (key: Key, value: Value): TransactionID => {
+    const set = (key: Key, value: Value): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        setAsync(key, value, resolve, reject);
+      });
+    };
+
+    const setAsync = (
+      key: Key,
+      value: Value,
+      onack: AckCallback,
+      onerror: Rejection
+    ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { set: { transactionId, key, value } };
       sendMsg(msg, socket);
+      pendingSets.set(transactionId, [onack, onerror]);
       return transactionId;
     };
 
-    const publish = (key: Key, value: Value): TransactionID => {
+    const publish = (key: Key, value: Value): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        // TODO reject after timeout?
+        publishAsync(key, value, resolve, reject);
+      });
+    };
+
+    const publishAsync = (
+      key: Key,
+      value: Value,
+      onack: AckCallback,
+      onerror: Rejection
+    ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { publish: { transactionId, key, value } };
       sendMsg(msg, socket);
+      pendingPublishes.set(transactionId, [onack, onerror]);
       return transactionId;
     };
 
     const subscribe = (
       key: Key,
-      onmessage?: StateCallback,
+      onmessage: StateCallback,
       unique?: boolean,
       liveOnly?: boolean,
       onerror?: Rejection
@@ -513,16 +527,13 @@ function startWebsocket(
         },
       };
       sendMsg(msg, socket);
-      if (onmessage) {
-        subscriptions.set(transactionId, [onmessage, onerror]);
-      }
-
+      subscriptions.set(transactionId, [onmessage, onerror]);
       return transactionId;
     };
 
     const pSubscribe = (
       requestPattern: RequestPattern,
-      onmessage?: PStateCallback,
+      onmessage: PStateCallback,
       unique?: boolean,
       liveOnly?: boolean,
       onerror?: Rejection
@@ -537,9 +548,7 @@ function startWebsocket(
         },
       };
       sendMsg(msg, socket);
-      if (onmessage) {
-        psubscriptions.set(transactionId, [onmessage, onerror]);
-      }
+      psubscriptions.set(transactionId, [onmessage, onerror]);
 
       return transactionId;
     };
@@ -554,7 +563,7 @@ function startWebsocket(
       sendMsg(msg, socket);
     };
 
-    const ls = (parent?: string): Promise<Children> => {
+    const ls = (parent?: Key): Promise<Children> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         lsAsync(parent, resolve, reject);
@@ -562,16 +571,14 @@ function startWebsocket(
     };
 
     const lsAsync = (
-      parent?: string,
-      callback?: LsCallback,
-      onerror?: Rejection
+      parent: Key | undefined,
+      callback: LsCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { ls: { transactionId, parent } };
       sendMsg(msg, socket);
-      if (callback) {
-        pendingLsStates.set(transactionId, [callback, onerror]);
-      }
+      pendingLsStates.set(transactionId, [callback, onerror]);
       return transactionId;
     };
 
@@ -583,22 +590,20 @@ function startWebsocket(
     };
 
     const pLsAsync = (
-      parentPattern?: RequestPattern,
-      callback?: LsCallback,
-      onerror?: Rejection
+      parentPattern: RequestPattern | undefined,
+      callback: LsCallback,
+      onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pLs: { transactionId, parentPattern } };
       sendMsg(msg, socket);
-      if (callback) {
-        pendingLsStates.set(transactionId, [callback, onerror]);
-      }
+      pendingLsStates.set(transactionId, [callback, onerror]);
       return transactionId;
     };
 
     const subscribeLs = (
-      parent?: string,
-      onmessage?: LsCallback,
+      parent: string | undefined,
+      onmessage: LsCallback,
       onerror?: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
@@ -606,9 +611,7 @@ function startWebsocket(
         subscribeLs: { transactionId, parent },
       };
       sendMsg(msg, socket);
-      if (onmessage) {
-        lssubscriptions.set(transactionId, [onmessage, onerror]);
-      }
+      lssubscriptions.set(transactionId, [onmessage, onerror]);
 
       return transactionId;
     };
@@ -662,6 +665,11 @@ function startWebsocket(
       return (it as string[]) || [];
     };
 
+    const clientName = async () => {
+      const it = await get(`$SYS/clients/${clientId()}/clientName`);
+      return it as string;
+    };
+
     const lastWill = async () => {
       const it = await get(`$SYS/clients/${clientId()}/lastWill`);
       return (it as KeyValuePairs) || [];
@@ -705,6 +713,7 @@ function startWebsocket(
       close,
       graveGoods,
       lastWill,
+      clientName,
       setGraveGoods,
       setLastWill,
       setClientName,
@@ -739,8 +748,8 @@ function startWebsocket(
     };
 
     socket.onerror = (e?: Event | Error) => {
-      if (connection.onwserror) {
-        connection.onwserror(e);
+      if (connection.onconnectionerror) {
+        connection.onconnectionerror(e);
       } else {
         console.error("Error in websocket connection.");
       }
@@ -785,6 +794,22 @@ function startWebsocket(
         if (subscription) {
           subscription[0](event);
         }
+      }
+    };
+
+    const processAckMsg = (msg: AckMsg) => {
+      const { transactionId } = msg.ack;
+
+      const pendingSet = pendingSets.get(transactionId);
+      if (pendingSet) {
+        pendingSets.delete(transactionId);
+        pendingSet[0]();
+      }
+
+      const pendingPublish = pendingPublishes.get(transactionId);
+      if (pendingPublish) {
+        pendingSets.delete(transactionId);
+        pendingPublish[0]();
       }
     };
 
@@ -915,6 +940,34 @@ function startWebsocket(
         }
       }
 
+      const pendingSet = pendingSets.get(transactionId);
+      if (pendingSet) {
+        pendingSets.delete(transactionId);
+        let [_, reject] = pendingSet;
+        if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in set with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingPublish = pendingPublishes.get(transactionId);
+      if (pendingPublish) {
+        pendingPublishes.delete(transactionId);
+        let [_, reject] = pendingPublish;
+        if (reject) {
+          reject(msg.err);
+        } else {
+          console.error(
+            `Error in publish with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
       const subscription = subscriptions.get(transactionId);
       if (subscription) {
         subscriptions.delete(transactionId);
@@ -1016,6 +1069,8 @@ function startWebsocket(
         processWelcomeMsg(<WelcomeMsg>msg);
       } else if ((<AuthorizedMsg>msg).authorized) {
         processAuthorizedMsg(<AuthorizedMsg>msg);
+      } else if (<AckMsg>msg) {
+        processAckMsg(<AckMsg>msg);
       }
     };
   });
