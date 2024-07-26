@@ -233,6 +233,7 @@ export type WbCache = {
   delete: (key: Key) => Promise<Value | undefined>;
   subscribe: (key: Key, callback: StateCallback) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
+  expire: (maxAge: number, interval?: number) => void;
 };
 
 export enum ErrorCodes {
@@ -566,6 +567,7 @@ function startWebsocket(
       const msg = {
         unsubscribe: { transactionId },
       };
+
       sendMsg(msg, socket);
     };
 
@@ -701,22 +703,66 @@ function startWebsocket(
       set(`$SYS/clients/${clientId()}/clientName`, clientName);
     };
 
-    // TODO implement cleanup mechanism
-
     const cache = new Map<Key, { value: Value | undefined }>();
     const cachedSubscriptions = new Map<
       string,
       Map<TransactionID, StateCallback>
     >();
     const subscriptionKeys = new Map<TransactionID, Key>();
+    const subscriptionTids = new Map<Key, TransactionID>();
+    const expirationCandidates = new Map<string, number>();
+
+    const expireCache = (maxAge: number) => {
+      console.debug("Expiring cache …");
+      const now = Date.now();
+      new Map(expirationCandidates).forEach((timestamp, key) => {
+        const age = now - timestamp;
+        if (age > maxAge) {
+          console.debug(key, "is older than maxAge (", age, ">", maxAge, ")");
+          const subs = cachedSubscriptions.get(key);
+          if (noActiveSubs(subs)) {
+            console.debug(
+              key,
+              "has no active subscriptions, removing it from cache"
+            );
+            cachedSubscriptions.delete(key);
+            const tid = subscriptionTids.get(key);
+            subscriptionTids.delete(key);
+            if (tid != null) {
+              console.debug("unsubscribing", tid);
+              unsubscribe(tid);
+            }
+            cache.delete(key);
+            expirationCandidates.delete(key);
+          } else {
+            console.debug(key, "has active subscriptions, keeping it in cache");
+          }
+        }
+      });
+    };
+
+    let gc: NodeJS.Timeout | null = null;
+
+    const expire = (maxAge: number, interval?: number) => {
+      if (gc != null) {
+        clearInterval(gc);
+        gc = null;
+      }
+      if (interval) {
+        gc = setInterval(() => expireCache(maxAge), interval);
+      } else {
+        expireCache(maxAge);
+      }
+    };
 
     const cSubscribe = (key: Key, callback: StateCallback) => {
+      expirationCandidates.delete(key);
       const transactionId = nextTransactionId();
       subscriptionKeys.set(transactionId, key);
       let existingSubscribers = cachedSubscriptions.get(key);
       if (!existingSubscribers) {
         let subs = new Map();
-        subscribe(
+        const tid = subscribe(
           key,
           (e) => {
             const newVal = { value: e.value };
@@ -732,6 +778,7 @@ function startWebsocket(
           false
         );
         cachedSubscriptions.set(key, (existingSubscribers = subs));
+        subscriptionTids.set(key, tid);
       }
       existingSubscribers.set(transactionId, callback);
       callback({ value: cache.get(key)?.value });
@@ -746,29 +793,35 @@ function startWebsocket(
       }
       subscriptionKeys.delete(tid);
       const subs = cachedSubscriptions.get(key);
-      if (!subs) {
-        return;
+      subs?.delete(tid);
+      if (noActiveSubs(subs)) {
+        expirationCandidates.set(key, Date.now());
       }
-      subs.delete(tid);
     };
 
     const cSet = async (key: Key, value: Value) => {
+      let subs = cachedSubscriptions.get(key);
+      if (noActiveSubs(subs)) {
+        expirationCandidates.set(key, Date.now());
+      }
       const newVal = { value };
       const previous = cache.get(key);
       if (!deepEqual(previous, newVal)) {
         cache.set(key, newVal);
-        let subs = cachedSubscriptions.get(key);
         subs?.forEach((callback) => callback(newVal));
       }
       return await set(key, value);
     };
 
     const cDel = async (key: Key) => {
+      let subs = cachedSubscriptions.get(key);
+      if (noActiveSubs(subs)) {
+        expirationCandidates.set(key, Date.now());
+      }
       const newVal = { value: undefined };
       const previous = cache.get(key);
       if (!deepEqual(previous, newVal)) {
         cache.set(key, newVal);
-        let subs = cachedSubscriptions.get(key);
         subs?.forEach((callback) => callback(newVal));
       }
       if (previous === undefined) {
@@ -780,6 +833,9 @@ function startWebsocket(
     };
 
     const cGet = async (key: Key) => {
+      if (noActiveSubs(cachedSubscriptions.get(key))) {
+        expirationCandidates.set(key, Date.now());
+      }
       const cached = cache.get(key);
       if (cached !== undefined) {
         return cached.value;
@@ -787,7 +843,7 @@ function startWebsocket(
       const value = await get(key);
       cache.set(key, { value });
       if (!cachedSubscriptions.has(key)) {
-        cSubscribe(key, () => {});
+        cSubscribe(key, noOpCallback);
       }
       return value;
     };
@@ -798,11 +854,15 @@ function startWebsocket(
       delete: cDel,
       subscribe: cSubscribe,
       unsubscribe: cUnsubscribe,
+      expire,
     };
 
     const cached = () => cachedClient;
 
     const close = () => {
+      if (gc != null) {
+        clearInterval(gc);
+      }
       cache.clear();
       cachedSubscriptions.clear();
       subscriptionKeys.clear();
@@ -1234,4 +1294,14 @@ function deepEqual(obj1: Value | undefined, obj2: Value | undefined) {
   }
   // If all checks pass, the objects are deep equal.
   return true;
+}
+
+function noOpCallback() {}
+
+function noActiveSubs(subs: Map<number, StateCallback> | undefined) {
+  return (
+    subs == null ||
+    subs.size === 0 ||
+    (subs.size === 1 && subs.values().next().value === noOpCallback)
+  );
 }

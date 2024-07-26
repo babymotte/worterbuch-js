@@ -10,7 +10,13 @@ async function main() {
     return;
   }
 
+  wb.pSubscribe(`$SYS/clients/${wb.clientId()}/subscriptions/#`, (e) =>
+    console.log("subscriptions:", e)
+  );
+
   const cached = wb.cached();
+
+  cached.expire(1000, 3000);
 
   cached.set("hello", "world");
 
@@ -42,21 +48,11 @@ async function main() {
 
   console.log(await cached.get("hello/world"));
 
-  console.log(
-    "subscriptions:",
-    await wb.get(`$SYS/clients/${wb.clientId()}/subscriptions`)
-  );
-
   const tid1 = cached.subscribe("test", console.log);
   const tid2 = cached.subscribe("test", console.log);
   const tid3 = cached.subscribe("test", console.log);
   const tid4 = cached.subscribe("test", console.log);
   const tid5 = cached.subscribe("test", console.log);
-
-  console.log(
-    "subscriptions:",
-    await wb.get(`$SYS/clients/${wb.clientId()}/subscriptions`)
-  );
 
   cached.set("test", "hello");
   cached.delete("test");
@@ -67,14 +63,11 @@ async function main() {
   cached.unsubscribe(tid4);
   cached.unsubscribe(tid5);
 
-  console.log(
-    "subscriptions:",
-    await wb.get(`$SYS/clients/${wb.clientId()}/subscriptions`)
-  );
-
   console.log(await cached.get("test"));
 
-  wb.close();
+  cached.subscribe("this/stays/active", console.log);
+
+  setTimeout(wb.close, 10000);
 }
 
 main();
