@@ -45,7 +45,7 @@ export function subscriptionPool(wb: Worterbuch): SubscriptionPool {
   > = new Map();
   const cache: Map<Key, Value> = new Map();
 
-  const subscribe = (
+  const subscribe = <T extends Value>(
     key: Key,
     callback: Callback,
     unique?: boolean,
@@ -67,7 +67,7 @@ export function subscriptionPool(wb: Worterbuch): SubscriptionPool {
     } else {
       let transactionId = wb.subscribe(
         key,
-        (event: StateEvent) => {
+        (event: StateEvent<T>) => {
           if (event.value) {
             cache.set(key, event.value);
           } else {

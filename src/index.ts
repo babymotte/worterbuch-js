@@ -28,42 +28,42 @@ export type RequestPatterns = RequestPattern[];
 export type Value = Object | Array<Value> | string | number | boolean | null;
 export type Children = string[];
 export type TransactionID = number;
-export type KeyValuePair = { key: Key; value: Value };
-export type KeyValuePairs = KeyValuePair[];
+export type KeyValuePair<T extends Value> = { key: Key; value: T };
+export type KeyValuePairs<T extends Value> = KeyValuePair<T>[];
 export type ProtocolVersion = { major: number; minor: number };
 export type ProtocolVersions = ProtocolVersion[];
 export type ErrorCode = number;
-export type StateEvent = { value?: Value; deleted?: Value };
-export type PStateEvent = {
-  keyValuePairs?: KeyValuePairs;
-  deleted?: KeyValuePairs;
+export type StateEvent<T extends Value> = { value?: Value; deleted?: T };
+export type PStateEvent<T extends Value> = {
+  keyValuePairs?: KeyValuePairs<T>;
+  deleted?: KeyValuePairs<T>;
 };
 export type LsEvent = {
   children: Children;
 };
 
 export type ErrorCallback = (err: Error) => void;
-export type GetCallback = (item: Value | undefined) => void;
-export type DeleteCallback = GetCallback;
-export type PGetCallback = (items: KeyValuePairs) => void;
-export type PDeleteCallback = PGetCallback;
-export type StateCallback = (event: StateEvent) => void;
-export type PStateCallback = (event: PStateEvent) => void;
+export type GetCallback<T extends Value> = (item: T | undefined) => void;
+export type DeleteCallback<T extends Value> = GetCallback<T>;
+export type PGetCallback<T extends Value> = (items: KeyValuePairs<T>) => void;
+export type PDeleteCallback<T extends Value> = PGetCallback<T>;
+export type StateCallback<T extends Value> = (event: StateEvent<T>) => void;
+export type PStateCallback<T extends Value> = (event: PStateEvent<T>) => void;
 export type LsCallback = (children: Children) => void;
 export type AckCallback = () => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
 export type AuthorizationRequest = { authToken: string };
-export type State = {
+export type State<T extends Value> = {
   transactionId: TransactionID;
-  keyValue: KeyValuePair | undefined;
-  deleted: KeyValuePair | undefined;
+  keyValue: KeyValuePair<T> | undefined;
+  deleted: KeyValuePair<T> | undefined;
 };
-export type PState = {
+export type PState<T extends Value> = {
   transactionId: TransactionID;
   requestPattern: RequestPattern;
-  keyValuePairs: KeyValuePairs | undefined;
-  deleted: KeyValuePairs | undefined;
+  keyValuePairs: KeyValuePairs<T> | undefined;
+  deleted: KeyValuePairs<T> | undefined;
 };
 export type LsState = { transactionId: TransactionID; children: Children };
 export type Err = {
@@ -108,8 +108,8 @@ export type UnsubscribeLs = {
   transactionId: number;
 };
 export type AckMsg = { ack: Ack };
-export type StateMsg = { state: State };
-export type PStateMsg = { pState: PState };
+export type StateMsg<T extends Value> = { state: State<T> };
+export type PStateMsg<T extends Value> = { pState: PState<T> };
 export type ErrMsg = { err: Err };
 export type WelcomeMsg = { welcome: Welcome };
 export type AuthorizedMsg = { authorized: Ack };
@@ -119,11 +119,11 @@ export type LsStateMsg = {
 export type AuthorizationRequestMsg = {
   authorizationRequest: AuthorizationRequest;
 };
-export type SetMsg = {
-  set: { transactionId: number; key: string; value: Value };
+export type SetMsg<T extends Value> = {
+  set: { transactionId: number; key: string; value: T };
 };
-export type PubMsg = {
-  publish: { transactionId: number; key: string; value: Value };
+export type PubMsg<T extends Value> = {
+  publish: { transactionId: number; key: string; value: T };
 };
 export type GetMsg = {
   get: Get;
@@ -158,18 +158,18 @@ export type SubscribeLsMsg = {
 export type UnsubscribeLsMsg = {
   unsubscribeLs: UnsubscribeLs;
 };
-export type ServerMessage =
+export type ServerMessage<T extends Value> =
   | AckMsg
-  | StateMsg
-  | PStateMsg
+  | StateMsg<T>
+  | PStateMsg<T>
   | ErrMsg
   | WelcomeMsg
   | AuthorizedMsg
   | LsStateMsg;
-export type ClientMessage =
+export type ClientMessage<T extends Value> =
   | AuthorizationRequestMsg
-  | SetMsg
-  | PubMsg
+  | SetMsg<T>
+  | PubMsg<T>
   | GetMsg
   | PGetMsg
   | DelMsg
@@ -183,22 +183,26 @@ export type ClientMessage =
   | UnsubscribeLsMsg;
 
 export type Worterbuch = {
-  get: (key: Key) => Promise<Value | undefined>;
-  pGet: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  delete: (key: Key) => Promise<Value | undefined>;
-  pDelete: (requestPattern: RequestPattern) => Promise<KeyValuePairs>;
-  set: (key: Key, value: Value) => Promise<void>;
-  publish: (key: Key, value: Value) => Promise<void>;
-  subscribe: (
+  get: <T extends Value>(key: Key) => Promise<T | undefined>;
+  pGet: <T extends Value>(
+    requestPattern: RequestPattern
+  ) => Promise<KeyValuePairs<T>>;
+  delete: <T extends Value>(key: Key) => Promise<T | undefined>;
+  pDelete: <T extends Value>(
+    requestPattern: RequestPattern
+  ) => Promise<KeyValuePairs<T>>;
+  set: <T extends Value>(key: Key, value: T) => Promise<void>;
+  publish: <T extends Value>(key: Key, value: T) => Promise<void>;
+  subscribe: <T extends Value>(
     key: Key,
-    callback: StateCallback,
+    callback: StateCallback<T>,
     unique?: boolean,
     liveOnly?: boolean,
     onerror?: Rejection
   ) => TransactionID;
-  pSubscribe: (
+  pSubscribe: <T extends Value>(
     requestPattern: RequestPattern,
-    callback: PStateCallback,
+    callback: PStateCallback<T>,
     unique?: boolean,
     liveOnly?: boolean,
     onerror?: Rejection
@@ -216,22 +220,27 @@ export type Worterbuch = {
   onclose?: (event?: CloseEvent) => any;
   onerror?: (event: Err) => any;
   onconnectionerror?: (event?: Event | Error) => any;
-  onmessage?: (msg: ServerMessage) => any;
+  onmessage?: <T extends Value>(msg: ServerMessage<T>) => any;
   clientId: () => string;
   graveGoods: () => Promise<string[]>;
-  lastWill: () => Promise<KeyValuePairs>;
+  lastWill: <T extends Value>() => Promise<KeyValuePairs<T>>;
   clientName: () => Promise<string | undefined>;
   setGraveGoods: (graveGoods: string[] | undefined) => void;
-  setLastWill: (lastWill: KeyValuePairs | undefined) => void;
+  setLastWill: <T extends Value>(
+    lastWill: KeyValuePairs<T> | undefined
+  ) => void;
   setClientName: (clientName: string) => void;
   cached: () => WbCache;
 };
 
 export type WbCache = {
-  get: (key: Key) => Promise<Value | undefined>;
-  set: (key: Key, value: Value) => Promise<void>;
-  delete: (key: Key) => Promise<Value | undefined>;
-  subscribe: (key: Key, callback: StateCallback) => TransactionID;
+  get: <T extends Value>(key: Key) => Promise<T | undefined>;
+  set: <T extends Value>(key: Key, value: T) => Promise<void>;
+  delete: <T extends Value>(key: Key) => Promise<T | undefined>;
+  subscribe: <T extends Value>(
+    key: Key,
+    callback: StateCallback<T>
+  ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
   expire: (maxAge: number, interval?: number) => void;
 };
@@ -266,11 +275,11 @@ export function connect(
   });
 }
 
-function encode_client_message(msg: ClientMessage): string {
+function encode_client_message<T extends Value>(msg: ClientMessage<T>): string {
   return JSON.stringify(msg);
 }
 
-function decode_server_message(msg: string): ServerMessage {
+function decode_server_message<T extends Value>(msg: string): ServerMessage<T> {
   return JSON.parse(msg);
 }
 
@@ -343,7 +352,10 @@ function startWebsocket(
     const connect = c.default;
     const socket = connect(proto, host, port, path);
 
-    const sendMsg = (msg: ClientMessage, socket: any) => {
+    const sendMsg = <T extends Value>(
+      msg: ClientMessage<T>,
+      socket: Socket
+    ) => {
       const buf = encode_client_message(msg);
       socket.send(buf);
       lastMsgSent = Date.now();
@@ -373,120 +385,140 @@ function startWebsocket(
       return state.transactionId++;
     };
 
-    const pendingGets = new Map<TransactionID, [GetCallback, Rejection]>();
-    const pendingPGets = new Map<TransactionID, [PGetCallback, Rejection]>();
+    const pendingGets = new Map<
+      TransactionID,
+      [GetCallback<Value>, Rejection]
+    >();
+    const pendingPGets = new Map<
+      TransactionID,
+      [PGetCallback<Value>, Rejection]
+    >();
     const pendingDeletes = new Map<
       TransactionID,
-      [DeleteCallback, Rejection]
+      [DeleteCallback<Value>, Rejection]
     >();
     const pendingPDeletes = new Map<
       TransactionID,
-      [PDeleteCallback, Rejection]
+      [PDeleteCallback<Value>, Rejection]
     >();
     const pendingLsStates = new Map<TransactionID, [LsCallback, Rejection]>();
     const pendingSets = new Map<TransactionID, [AckCallback, Rejection]>();
     const pendingPublishes = new Map<TransactionID, [AckCallback, Rejection]>();
     const subscriptions = new Map<
       TransactionID,
-      [StateCallback, Rejection | undefined]
+      [StateCallback<Value>, Rejection | undefined]
     >();
     const psubscriptions = new Map<
       TransactionID,
-      [PStateCallback, Rejection | undefined]
+      [PStateCallback<Value>, Rejection | undefined]
     >();
     const lssubscriptions = new Map<
       TransactionID,
       [LsCallback, Rejection | undefined]
     >();
 
-    const get = (key: Key): Promise<Value | undefined> => {
+    const get = <T extends Value>(key: Key): Promise<T | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         getAsync(key, resolve, reject);
       });
     };
 
-    const getAsync = (
+    const getAsync = <T extends Value>(
       key: Key,
-      onmessage: GetCallback,
+      onmessage: GetCallback<T>,
       onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { get: { transactionId, key } };
       sendMsg(msg, socket);
-      pendingGets.set(transactionId, [onmessage, onerror]);
+      pendingGets.set(transactionId, [
+        onmessage as GetCallback<Value>,
+        onerror,
+      ]);
       return transactionId;
     };
 
-    const pGet = (requestPattern: RequestPattern): Promise<KeyValuePairs> => {
+    const pGet = <T extends Value>(
+      requestPattern: RequestPattern
+    ): Promise<KeyValuePairs<T>> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         pGetAsync(requestPattern, resolve, reject);
       });
     };
 
-    const pGetAsync = (
+    const pGetAsync = <T extends Value>(
       requestPattern: RequestPattern,
-      onmessage: PGetCallback,
+      onmessage: PGetCallback<T>,
       onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pGet: { transactionId, requestPattern } };
       sendMsg(msg, socket);
-      pendingPGets.set(transactionId, [onmessage, onerror]);
+      pendingPGets.set(transactionId, [
+        onmessage as PGetCallback<Value>,
+        onerror,
+      ]);
       return transactionId;
     };
 
-    const del = (key: Key): Promise<Value | undefined> => {
+    const del = <T extends Value>(key: Key): Promise<T | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         deleteAsync(key, resolve, reject);
       });
     };
 
-    const deleteAsync = (
+    const deleteAsync = <T extends Value>(
       key: Key,
-      onmessage: DeleteCallback,
+      onmessage: DeleteCallback<T>,
       onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { delete: { transactionId, key } };
       sendMsg(msg, socket);
-      pendingDeletes.set(transactionId, [onmessage, onerror]);
+      pendingDeletes.set(transactionId, [
+        onmessage as DeleteCallback<Value>,
+        onerror,
+      ]);
       return transactionId;
     };
 
-    const pDelete = (
+    const pDelete = <T extends Value>(
       requestPattern: RequestPattern
-    ): Promise<KeyValuePairs> => {
+    ): Promise<KeyValuePairs<T>> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         pDeleteAsync(requestPattern, resolve, reject);
       });
     };
 
-    const pDeleteAsync = (
+    const pDeleteAsync = <T extends Value>(
       requestPattern: RequestPattern,
-      onmessage: PDeleteCallback,
+      onmessage: PDeleteCallback<T>,
       onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
       const msg = { pDelete: { transactionId, requestPattern } };
-      pendingPDeletes.set(transactionId, [onmessage, onerror]);
+      pendingPDeletes.set(transactionId, [
+        onmessage as PDeleteCallback<Value>,
+        onerror,
+      ]);
       sendMsg(msg, socket);
       return transactionId;
     };
 
-    const set = (key: Key, value: Value): Promise<void> => {
+    const set = <T extends Value>(key: Key, value: T): Promise<void> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         setAsync(key, value, resolve, reject);
       });
     };
 
-    const setAsync = (
+    const setAsync = <T extends Value>(
       key: Key,
-      value: Value,
+      value: T,
       onack: AckCallback,
       onerror: Rejection
     ): TransactionID => {
@@ -497,16 +529,16 @@ function startWebsocket(
       return transactionId;
     };
 
-    const publish = (key: Key, value: Value): Promise<void> => {
+    const publish = <T extends Value>(key: Key, value: T): Promise<void> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
         publishAsync(key, value, resolve, reject);
       });
     };
 
-    const publishAsync = (
+    const publishAsync = <T extends Value>(
       key: Key,
-      value: Value,
+      value: T,
       onack: AckCallback,
       onerror: Rejection
     ): TransactionID => {
@@ -517,9 +549,9 @@ function startWebsocket(
       return transactionId;
     };
 
-    const subscribe = (
+    const subscribe = <T extends Value>(
       key: Key,
-      onmessage: StateCallback,
+      onmessage: StateCallback<T>,
       unique?: boolean,
       liveOnly?: boolean,
       onerror?: Rejection
@@ -534,13 +566,16 @@ function startWebsocket(
         },
       };
       sendMsg(msg, socket);
-      subscriptions.set(transactionId, [onmessage, onerror]);
+      subscriptions.set(transactionId, [
+        onmessage as StateCallback<Value>,
+        onerror,
+      ]);
       return transactionId;
     };
 
-    const pSubscribe = (
+    const pSubscribe = <T extends Value>(
       requestPattern: RequestPattern,
-      onmessage: PStateCallback,
+      onmessage: PStateCallback<T>,
       unique?: boolean,
       liveOnly?: boolean,
       onerror?: Rejection
@@ -555,7 +590,10 @@ function startWebsocket(
         },
       };
       sendMsg(msg, socket);
-      psubscriptions.set(transactionId, [onmessage, onerror]);
+      psubscriptions.set(transactionId, [
+        onmessage as PStateCallback<Value>,
+        onerror,
+      ]);
 
       return transactionId;
     };
@@ -678,9 +716,9 @@ function startWebsocket(
       return it as string;
     };
 
-    const lastWill = async () => {
+    const lastWill = async <T extends Value>() => {
       const it = await get(`$SYS/clients/${clientId()}/lastWill`);
-      return (it as KeyValuePairs) || [];
+      return (it as KeyValuePairs<T>) || [];
     };
 
     const setGraveGoods = (graveGoods: string[] | undefined) => {
@@ -691,7 +729,9 @@ function startWebsocket(
       }
     };
 
-    const setLastWill = (lastWill: KeyValuePairs | undefined) => {
+    const setLastWill = <T extends Value>(
+      lastWill: KeyValuePairs<T> | undefined
+    ) => {
       if (!lastWill) {
         del(`$SYS/clients/${clientId()}/lastWill`);
       } else {
@@ -706,7 +746,7 @@ function startWebsocket(
     const cache = new Map<Key, { value: Value | undefined }>();
     const cachedSubscriptions = new Map<
       string,
-      Map<TransactionID, StateCallback>
+      Map<TransactionID, StateCallback<Value>>
     >();
     const subscriptionKeys = new Map<TransactionID, Key>();
     const subscriptionTids = new Map<Key, TransactionID>();
@@ -755,7 +795,10 @@ function startWebsocket(
       }
     };
 
-    const cSubscribe = (key: Key, callback: StateCallback) => {
+    const cSubscribe = <T extends Value>(
+      key: Key,
+      callback: StateCallback<T>
+    ) => {
       expirationCandidates.delete(key);
       const transactionId = nextTransactionId();
       subscriptionKeys.set(transactionId, key);
@@ -780,7 +823,7 @@ function startWebsocket(
         cachedSubscriptions.set(key, (existingSubscribers = subs));
         subscriptionTids.set(key, tid);
       }
-      existingSubscribers.set(transactionId, callback);
+      existingSubscribers.set(transactionId, callback as StateCallback<Value>);
       callback({ value: cache.get(key)?.value });
 
       return transactionId;
@@ -799,7 +842,7 @@ function startWebsocket(
       }
     };
 
-    const cSet = async (key: Key, value: Value) => {
+    const cSet = async <T extends Value>(key: Key, value: T) => {
       let subs = cachedSubscriptions.get(key);
       if (noActiveSubs(subs)) {
         expirationCandidates.set(key, Date.now());
@@ -810,10 +853,10 @@ function startWebsocket(
         cache.set(key, newVal);
         subs?.forEach((callback) => callback(newVal));
       }
-      return await set(key, value);
+      return await set<T>(key, value);
     };
 
-    const cDel = async (key: Key) => {
+    const cDel = async <T extends Value>(key: Key): Promise<T | undefined> => {
       let subs = cachedSubscriptions.get(key);
       if (noActiveSubs(subs)) {
         expirationCandidates.set(key, Date.now());
@@ -825,25 +868,25 @@ function startWebsocket(
         subs?.forEach((callback) => callback(newVal));
       }
       if (previous === undefined) {
-        return await del(key);
+        return await del<T>(key);
       } else {
         del(key);
-        return previous;
+        return previous.value as T;
       }
     };
 
-    const cGet = async (key: Key) => {
+    const cGet = async <T extends Value>(key: Key): Promise<T | undefined> => {
       if (noActiveSubs(cachedSubscriptions.get(key))) {
         expirationCandidates.set(key, Date.now());
       }
       const cached = cache.get(key);
       if (cached !== undefined) {
-        return cached.value;
+        return cached.value as T;
       }
-      const value = await get(key);
+      const value = await get<T>(key);
       cache.set(key, { value });
       if (!cachedSubscriptions.has(key)) {
-        cSubscribe(key, noOpCallback);
+        cSubscribe<T>(key, noOpCallback);
       }
       return value;
     };
@@ -940,7 +983,7 @@ function startWebsocket(
       lastMsgSent = Date.now();
     };
 
-    const processStateMsg = (msg: StateMsg) => {
+    const processStateMsg = <T extends Value>(msg: StateMsg<T>) => {
       const { transactionId, keyValue, deleted } = msg.state;
 
       if (keyValue) {
@@ -1004,7 +1047,7 @@ function startWebsocket(
       }
     };
 
-    const processPStateMsg = (msg: PStateMsg) => {
+    const processPStateMsg = <T extends Value>(msg: PStateMsg<T>) => {
       const transactionId = msg.pState.transactionId;
       const keyValuePairs = msg.pState.keyValuePairs;
       const deleted = msg.pState.deleted;
@@ -1227,16 +1270,16 @@ function startWebsocket(
 
     socket.onmessage = async (e: string) => {
       lastMsgReceived = Date.now();
-      const msg: ServerMessage = decode_server_message(e);
+      const msg: ServerMessage<Value> = decode_server_message(e);
 
       if (connection.onmessage) {
         connection.onmessage(msg);
       }
 
-      if ((<StateMsg>msg).state) {
-        processStateMsg(<StateMsg>msg);
-      } else if ((<PStateMsg>msg).pState) {
-        processPStateMsg(<PStateMsg>msg);
+      if ((<StateMsg<Value>>msg).state) {
+        processStateMsg(<StateMsg<Value>>msg);
+      } else if ((<PStateMsg<Value>>msg).pState) {
+        processPStateMsg(<PStateMsg<Value>>msg);
       } else if ((<ErrMsg>msg).err) {
         processErrMsg(<ErrMsg>msg);
       } else if ((<LsStateMsg>msg).lsState) {
@@ -1298,7 +1341,9 @@ function deepEqual(obj1: Value | undefined, obj2: Value | undefined) {
 
 function noOpCallback() {}
 
-function noActiveSubs(subs: Map<number, StateCallback> | undefined) {
+function noActiveSubs<T extends Value>(
+  subs: Map<number, StateCallback<T>> | undefined
+) {
   return (
     subs == null ||
     subs.size === 0 ||
