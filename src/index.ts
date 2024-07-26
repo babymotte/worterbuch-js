@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { sha256 } from "js-sha256";
 import { CloseEvent, Socket } from "./socket";
 import { WbError } from "./error";
 
@@ -26,7 +25,7 @@ export { WbError } from "./error";
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
-export type Value = Object | Array<any> | string | number | boolean;
+export type Value = Object | Array<Value> | string | number | boolean | null;
 export type Children = string[];
 export type TransactionID = number;
 export type KeyValuePair = { key: Key; value: Value };
@@ -225,21 +224,30 @@ export type Worterbuch = {
   setGraveGoods: (graveGoods: string[] | undefined) => void;
   setLastWill: (lastWill: KeyValuePairs | undefined) => void;
   setClientName: (clientName: string) => void;
+  cached: () => WbCache;
 };
 
-export const ErrorCodes = {
-  IllegalWildcard: 0b00000000,
-  IllegalMultiWildcard: 0b00000001,
-  MultiWildcardAtIllegalPosition: 0b00000010,
-  IoError: 0b00000011,
-  SerdeError: 0b00000100,
-  NoSuchValue: 0b00000101,
-  NotSubscribed: 0b00000110,
-  ProtocolNegotiationFailed: 0b00000111,
-  InvalidServerResponse: 0b00001000,
-  ReadOnlyKey: 0b00001001,
-  Other: 0b11111111,
+export type WbCache = {
+  get: (key: Key) => Promise<Value | undefined>;
+  set: (key: Key, value: Value) => Promise<void>;
+  delete: (key: Key) => Promise<Value | undefined>;
+  subscribe: (key: Key, callback: StateCallback) => TransactionID;
+  unsubscribe: (transactionID: TransactionID) => void;
 };
+
+export enum ErrorCodes {
+  IllegalWildcard = 0b00000000,
+  IllegalMultiWildcard = 0b00000001,
+  MultiWildcardAtIllegalPosition = 0b00000010,
+  IoError = 0b00000011,
+  SerdeError = 0b00000100,
+  NoSuchValue = 0b00000101,
+  NotSubscribed = 0b00000110,
+  ProtocolNegotiationFailed = 0b00000111,
+  InvalidServerResponse = 0b00001000,
+  ReadOnlyKey = 0b00001001,
+  Other = 0b11111111,
+}
 
 export type Rejection = (reason?: any) => void;
 
@@ -333,11 +341,6 @@ function startWebsocket(
   client.then((c) => {
     const connect = c.default;
     const socket = connect(proto, host, port, path);
-
-    const close = () => {
-      closing = true;
-      socket.close();
-    };
 
     const sendMsg = (msg: ClientMessage, socket: any) => {
       const buf = encode_client_message(msg);
@@ -698,6 +701,115 @@ function startWebsocket(
       set(`$SYS/clients/${clientId()}/clientName`, clientName);
     };
 
+    // TODO implement cleanup mechanism
+
+    const cache = new Map<Key, { value: Value | undefined }>();
+    const cachedSubscriptions = new Map<
+      string,
+      Map<TransactionID, StateCallback>
+    >();
+    const subscriptionKeys = new Map<TransactionID, Key>();
+
+    const cSubscribe = (key: Key, callback: StateCallback) => {
+      const transactionId = nextTransactionId();
+      subscriptionKeys.set(transactionId, key);
+      let existingSubscribers = cachedSubscriptions.get(key);
+      if (!existingSubscribers) {
+        let subs = new Map();
+        subscribe(
+          key,
+          (e) => {
+            const newVal = { value: e.value };
+            const previous = cache.get(key);
+            cache.set(key, newVal);
+            if (!deepEqual(previous, newVal)) {
+              subs.forEach((callback) => {
+                callback(newVal.value);
+              });
+            }
+          },
+          true,
+          false
+        );
+        cachedSubscriptions.set(key, (existingSubscribers = subs));
+      }
+      existingSubscribers.set(transactionId, callback);
+      callback({ value: cache.get(key)?.value });
+
+      return transactionId;
+    };
+
+    const cUnsubscribe = (tid: TransactionID) => {
+      const key = subscriptionKeys.get(tid);
+      if (!key) {
+        return;
+      }
+      subscriptionKeys.delete(tid);
+      const subs = cachedSubscriptions.get(key);
+      if (!subs) {
+        return;
+      }
+      subs.delete(tid);
+    };
+
+    const cSet = async (key: Key, value: Value) => {
+      const newVal = { value };
+      const previous = cache.get(key);
+      if (!deepEqual(previous, newVal)) {
+        cache.set(key, newVal);
+        let subs = cachedSubscriptions.get(key);
+        subs?.forEach((callback) => callback(newVal));
+      }
+      return await set(key, value);
+    };
+
+    const cDel = async (key: Key) => {
+      const newVal = { value: undefined };
+      const previous = cache.get(key);
+      if (!deepEqual(previous, newVal)) {
+        cache.set(key, newVal);
+        let subs = cachedSubscriptions.get(key);
+        subs?.forEach((callback) => callback(newVal));
+      }
+      if (previous === undefined) {
+        return await del(key);
+      } else {
+        del(key);
+        return previous;
+      }
+    };
+
+    const cGet = async (key: Key) => {
+      const cached = cache.get(key);
+      if (cached !== undefined) {
+        return cached.value;
+      }
+      const value = await get(key);
+      cache.set(key, { value });
+      if (!cachedSubscriptions.has(key)) {
+        cSubscribe(key, () => {});
+      }
+      return value;
+    };
+
+    const cachedClient: WbCache = {
+      get: cGet,
+      set: cSet,
+      delete: cDel,
+      subscribe: cSubscribe,
+      unsubscribe: cUnsubscribe,
+    };
+
+    const cached = () => cachedClient;
+
+    const close = () => {
+      cache.clear();
+      cachedSubscriptions.clear();
+      subscriptionKeys.clear();
+      closing = true;
+      socket.close();
+    };
+
     const connection: Worterbuch = {
       clientId,
       get,
@@ -720,6 +832,7 @@ function startWebsocket(
       setGraveGoods,
       setLastWill,
       setClientName,
+      cached,
     };
 
     socket.onopen = (e?: Event) => {
@@ -1087,4 +1200,38 @@ function defaultPort(proto: string) {
     return 8081;
   }
   return 80;
+}
+
+function deepEqual(obj1: Value | undefined, obj2: Value | undefined) {
+  // Base case: If both objects are identical, return true.
+  if (obj1 === obj2) {
+    return true;
+  }
+  // Check if both objects are objects and not null.
+  if (
+    typeof obj1 !== "object" ||
+    typeof obj2 !== "object" ||
+    obj1 == null ||
+    obj2 == null
+  ) {
+    return false;
+  }
+  // Get the keys of both objects.
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+  // Check if the number of keys is the same.
+  if (keys1.length !== keys2.length) {
+    return false;
+  }
+  // Iterate through the keys and compare their values recursively.
+  for (const key of keys1) {
+    if (
+      !keys2.includes(key) ||
+      !deepEqual((obj1 as any)[key], (obj2 as any)[key])
+    ) {
+      return false;
+    }
+  }
+  // If all checks pass, the objects are deep equal.
+  return true;
 }
