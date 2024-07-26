@@ -33,7 +33,7 @@ export type KeyValuePairs<T extends Value> = KeyValuePair<T>[];
 export type ProtocolVersion = { major: number; minor: number };
 export type ProtocolVersions = ProtocolVersion[];
 export type ErrorCode = number;
-export type StateEvent<T extends Value> = { value?: Value; deleted?: T };
+export type StateEvent<T extends Value> = { value?: T; deleted?: T };
 export type PStateEvent<T extends Value> = {
   keyValuePairs?: KeyValuePairs<T>;
   deleted?: KeyValuePairs<T>;
@@ -824,7 +824,7 @@ function startWebsocket(
         subscriptionTids.set(key, tid);
       }
       existingSubscribers.set(transactionId, callback as StateCallback<Value>);
-      callback({ value: cache.get(key)?.value });
+      callback({ value: cache.get(key)?.value as T });
 
       return transactionId;
     };
