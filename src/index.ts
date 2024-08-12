@@ -189,7 +189,8 @@ export type Worterbuch = {
   ) => Promise<KeyValuePairs<T>>;
   delete: <T extends Value>(key: Key) => Promise<T | undefined>;
   pDelete: <T extends Value>(
-    requestPattern: RequestPattern
+    requestPattern: RequestPattern,
+    quiet?: boolean
   ) => Promise<KeyValuePairs<T>>;
   set: <T extends Value>(key: Key, value: T) => Promise<void>;
   publish: <T extends Value>(key: Key, value: T) => Promise<void>;
@@ -486,21 +487,23 @@ function startWebsocket(
     };
 
     const pDelete = <T extends Value>(
-      requestPattern: RequestPattern
+      requestPattern: RequestPattern,
+      quiet?: boolean
     ): Promise<KeyValuePairs<T>> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
-        pDeleteAsync(requestPattern, resolve, reject);
+        pDeleteAsync(requestPattern, quiet || false, resolve, reject);
       });
     };
 
     const pDeleteAsync = <T extends Value>(
       requestPattern: RequestPattern,
+      quiet: boolean,
       onmessage: PDeleteCallback<T>,
       onerror: Rejection
     ): TransactionID => {
       const transactionId = nextTransactionId();
-      const msg = { pDelete: { transactionId, requestPattern } };
+      const msg = { pDelete: { transactionId, requestPattern, quiet } };
       pendingPDeletes.set(transactionId, [
         onmessage as PDeleteCallback<Value>,
         onerror,
