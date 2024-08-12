@@ -48,6 +48,9 @@ export type DeleteCallback<T extends Value> = GetCallback<T>;
 export type PGetCallback<T extends Value> = (items: KeyValuePairs<T>) => void;
 export type PDeleteCallback<T extends Value> = PGetCallback<T>;
 export type StateCallback<T extends Value> = (event: StateEvent<T>) => void;
+export type CachedStateCallback<T extends Value> = (
+  value: T | undefined
+) => void;
 export type PStateCallback<T extends Value> = (event: PStateEvent<T>) => void;
 export type LsCallback = (children: Children) => void;
 export type AckCallback = () => void;
@@ -240,7 +243,7 @@ export type WbCache = {
   delete: <T extends Value>(key: Key) => Promise<T | undefined>;
   subscribe: <T extends Value>(
     key: Key,
-    callback: StateCallback<T>
+    callback: CachedStateCallback<T>
   ) => TransactionID;
   unsubscribe: (transactionID: TransactionID) => void;
   expire: (maxAge: number, interval?: number) => void;
@@ -749,7 +752,7 @@ function startWebsocket(
     const cache = new Map<Key, { value: Value | undefined }>();
     const cachedSubscriptions = new Map<
       string,
-      Map<TransactionID, StateCallback<Value>>
+      Map<TransactionID, CachedStateCallback<Value>>
     >();
     const subscriptionKeys = new Map<TransactionID, Key>();
     const subscriptionTids = new Map<Key, TransactionID>();
@@ -800,7 +803,7 @@ function startWebsocket(
 
     const cSubscribe = <T extends Value>(
       key: Key,
-      callback: StateCallback<T>
+      callback: CachedStateCallback<T>
     ) => {
       expirationCandidates.delete(key);
       const transactionId = nextTransactionId();
@@ -826,8 +829,11 @@ function startWebsocket(
         cachedSubscriptions.set(key, (existingSubscribers = subs));
         subscriptionTids.set(key, tid);
       }
-      existingSubscribers.set(transactionId, callback as StateCallback<Value>);
-      callback({ value: cache.get(key)?.value as T });
+      existingSubscribers.set(
+        transactionId,
+        callback as CachedStateCallback<Value>
+      );
+      callback(cache.get(key)?.value as T);
 
       return transactionId;
     };
@@ -854,7 +860,7 @@ function startWebsocket(
       const previous = cache.get(key);
       if (!deepEqual(previous, newVal)) {
         cache.set(key, newVal);
-        subs?.forEach((callback) => callback(newVal));
+        subs?.forEach((callback) => callback(newVal.value));
       }
       return await set<T>(key, value);
     };
@@ -868,7 +874,7 @@ function startWebsocket(
       const previous = cache.get(key);
       if (!deepEqual(previous, newVal)) {
         cache.set(key, newVal);
-        subs?.forEach((callback) => callback(newVal));
+        subs?.forEach((callback) => callback(newVal.value));
       }
       if (previous === undefined) {
         return await del<T>(key);

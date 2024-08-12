@@ -1,4 +1,3 @@
-import { log } from "console";
 import { connect } from "./util";
 
 async function main() {
@@ -20,21 +19,33 @@ async function main() {
 
   cached.set("hello", "world");
 
-  console.log(await cached.get("hello"));
+  console.log("hello", await cached.get("hello"));
 
-  console.log(await cached.get("hello/doesnt/exist"));
-  console.log(await cached.get("hello/doesnt/exist"));
-  console.log(await cached.get("hello/doesnt/exist"));
+  console.log("hello/doesnt/exist", await cached.get("hello/doesnt/exist"));
+  console.log("hello/doesnt/exist", await cached.get("hello/doesnt/exist"));
+  console.log("hello/doesnt/exist", await cached.get("hello/doesnt/exist"));
 
-  cached.get("hello/doesnt/exist/either").then(console.log);
-  cached.get("hello/doesnt/exist/either").then(console.log);
-  cached.get("hello/doesnt/exist/either").then(console.log);
+  cached
+    .get("hello/doesnt/exist/either")
+    .then((v) => console.log("hello/doesnt/exist/either", v));
+  cached
+    .get("hello/doesnt/exist/either")
+    .then((v) => console.log("hello/doesnt/exist/either", v));
+  cached
+    .get("hello/doesnt/exist/either")
+    .then((v) => console.log("hello/doesnt/exist/either", v));
 
-  console.log(await cached.get("neither/does/this"));
-  cached.get("neither/does/this").then(console.log);
-  cached.get("neither/does/this").then(console.log);
+  console.log("neither/does/this", await cached.get("neither/does/this"));
+  cached
+    .get("neither/does/this")
+    .then((v) => console.log("neither/does/this", v));
+  cached
+    .get("neither/does/this")
+    .then((v) => console.log("neither/does/this", v));
 
-  const tid = cached.subscribe("hello/world", console.log);
+  const tid = cached.subscribe("hello/world", (v) =>
+    console.log("sub hello/world", v)
+  );
 
   cached.set("hello/world", 1);
   cached.set("hello/world", 2);
@@ -46,13 +57,13 @@ async function main() {
   cached.set("hello/world", 5);
   cached.set("hello/world", 6);
 
-  console.log(await cached.get("hello/world"));
+  console.log("hello/world", await cached.get("hello/world"));
 
-  const tid1 = cached.subscribe("test", console.log);
-  const tid2 = cached.subscribe("test", console.log);
-  const tid3 = cached.subscribe("test", console.log);
-  const tid4 = cached.subscribe("test", console.log);
-  const tid5 = cached.subscribe("test", console.log);
+  const tid1 = cached.subscribe("test", (v) => console.log("sub test", v));
+  const tid2 = cached.subscribe("test", (v) => console.log("sub test", v));
+  const tid3 = cached.subscribe("test", (v) => console.log("sub test", v));
+  const tid4 = cached.subscribe("test", (v) => console.log("sub test", v));
+  const tid5 = cached.subscribe("test", (v) => console.log("sub test", v));
 
   cached.set("test", "hello");
   cached.delete("test");
@@ -65,7 +76,9 @@ async function main() {
 
   console.log(await cached.get("test"));
 
-  cached.subscribe("this/stays/active", console.log);
+  cached.subscribe("this/stays/active", (v) =>
+    console.log("sub this/stays/active", v)
+  );
 
   setTimeout(wb.close, 10000);
 }
