@@ -833,7 +833,10 @@ function startWebsocket(
         transactionId,
         callback as CachedStateCallback<Value>
       );
-      callback(cache.get(key)?.value as T);
+      const current = cache.get(key);
+      if (current != null) {
+        callback(current.value as T);
+      }
 
       return transactionId;
     };

@@ -80,6 +80,9 @@ async function main() {
     console.log("sub this/stays/active", v)
   );
 
+  wb.set("uncached", "value");
+  cached.subscribe("uncached", (v) => console.log("sub uncached", v));
+
   setTimeout(wb.close, 10000);
 }
 
