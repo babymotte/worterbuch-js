@@ -25,7 +25,13 @@ export { WbError } from "./error";
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
-export type Value = Object | Array<Value> | string | number | boolean | null;
+export type Value =
+  | { [key: string]: Value }
+  | Array<Value>
+  | string
+  | number
+  | boolean
+  | null;
 export type Children = string[];
 export type TransactionID = number;
 export type KeyValuePair<T extends Value> = { key: Key; value: T };
@@ -424,7 +430,7 @@ function startWebsocket(
     const get = <T extends Value>(key: Key): Promise<T | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
-        getAsync(key, resolve, reject);
+        getAsync<T>(key, resolve, reject);
       });
     };
 
@@ -470,7 +476,7 @@ function startWebsocket(
     const del = <T extends Value>(key: Key): Promise<T | undefined> => {
       return new Promise((resolve, reject) => {
         // TODO reject after timeout?
-        deleteAsync(key, resolve, reject);
+        deleteAsync<T>(key, resolve, reject);
       });
     };
 
@@ -814,12 +820,11 @@ function startWebsocket(
         const tid = subscribe(
           key,
           (e) => {
-            const newVal = { value: e.value };
             const previous = cache.get(key);
-            cache.set(key, newVal);
-            if (!deepEqual(previous, newVal)) {
+            cache.set(key, { value: e.value });
+            if (previous === undefined || !deepEqual(previous.value, e.value)) {
               subs.forEach((callback) => {
-                callback(newVal.value);
+                callback(e.value);
               });
             }
           },
@@ -859,11 +864,10 @@ function startWebsocket(
       if (noActiveSubs(subs)) {
         expirationCandidates.set(key, Date.now());
       }
-      const newVal = { value };
       const previous = cache.get(key);
-      if (!deepEqual(previous, newVal)) {
-        cache.set(key, newVal);
-        subs?.forEach((callback) => callback(newVal.value));
+      if (previous === undefined || !deepEqual(previous.value, value)) {
+        cache.set(key, { value });
+        subs?.forEach((callback) => callback(value));
       }
       return await set<T>(key, value);
     };
@@ -873,11 +877,10 @@ function startWebsocket(
       if (noActiveSubs(subs)) {
         expirationCandidates.set(key, Date.now());
       }
-      const newVal = { value: undefined };
       const previous = cache.get(key);
-      if (!deepEqual(previous, newVal)) {
-        cache.set(key, newVal);
-        subs?.forEach((callback) => callback(newVal.value));
+      if (previous === undefined || previous.value !== undefined) {
+        cache.set(key, { value: undefined });
+        subs?.forEach((callback) => callback(undefined));
       }
       if (previous === undefined) {
         return await del<T>(key);
