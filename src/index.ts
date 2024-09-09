@@ -17,7 +17,7 @@
 import { CloseEvent, Socket } from "./socket";
 import { WbError } from "./error";
 
-const SUPPORTED_PROTOCOL_VERSIONS = ["0.9"];
+const SUPPORTED_PROTOCOL_VERSIONS = ["0.10"];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export { WbError } from "./error";
@@ -60,13 +60,14 @@ export type CachedStateCallback<T extends Value> = (
 export type PStateCallback<T extends Value> = (event: PStateEvent<T>) => void;
 export type LsCallback = (children: Children) => void;
 export type AckCallback = () => void;
+export type TidCallback = (tid: TransactionID) => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
 export type AuthorizationRequest = { authToken: string };
 export type State<T extends Value> = {
   transactionId: TransactionID;
-  keyValue: KeyValuePair<T> | undefined;
-  deleted: KeyValuePair<T> | undefined;
+  value: T | undefined;
+  deleted: T | undefined;
 };
 export type PState<T extends Value> = {
   transactionId: TransactionID;
@@ -131,6 +132,12 @@ export type AuthorizationRequestMsg = {
 export type SetMsg<T extends Value> = {
   set: { transactionId: number; key: string; value: T };
 };
+export type SPubInitMsg = {
+  sPubInit: { transactionId: number; key: string };
+};
+export type SPubMsg<T extends Value> = {
+  sPub: { transactionId: number; value: T };
+};
 export type PubMsg<T extends Value> = {
   publish: { transactionId: number; key: string; value: T };
 };
@@ -178,6 +185,8 @@ export type ServerMessage<T extends Value> =
 export type ClientMessage<T extends Value> =
   | AuthorizationRequestMsg
   | SetMsg<T>
+  | SPubInitMsg
+  | SPubMsg<T>
   | PubMsg<T>
   | GetMsg
   | PGetMsg
@@ -202,6 +211,8 @@ export type Worterbuch = {
     quiet?: boolean
   ) => Promise<KeyValuePairs<T>>;
   set: <T extends Value>(key: Key, value: T) => Promise<void>;
+  sPubInit: (key: Key) => Promise<TransactionID>;
+  sPub: <T extends Value>(transactionId: TransactionID, value: T) => void;
   publish: <T extends Value>(key: Key, value: T) => Promise<void>;
   subscribe: <T extends Value>(
     key: Key,
@@ -413,6 +424,7 @@ function startWebsocket(
     >();
     const pendingLsStates = new Map<TransactionID, [LsCallback, Rejection]>();
     const pendingSets = new Map<TransactionID, [AckCallback, Rejection]>();
+    const pendingSpubInits = new Map<TransactionID, [TidCallback, Rejection]>();
     const pendingPublishes = new Map<TransactionID, [AckCallback, Rejection]>();
     const subscriptions = new Map<
       TransactionID,
@@ -539,6 +551,20 @@ function startWebsocket(
       sendMsg(msg, socket);
       pendingSets.set(transactionId, [onack, onerror]);
       return transactionId;
+    };
+
+    const sPubInit = (key: Key): Promise<TransactionID> => {
+      const transactionId = nextTransactionId();
+      const msg = { sPubInit: { transactionId, key } };
+      sendMsg(msg, socket);
+      return new Promise((onack, onerror) => {
+        pendingSpubInits.set(transactionId, [onack, onerror]);
+      });
+    };
+
+    const sPub = <T extends Value>(transactionId: TransactionID, value: T) => {
+      const msg = { sPub: { transactionId, value } };
+      sendMsg(msg, socket);
     };
 
     const publish = <T extends Value>(key: Key, value: T): Promise<void> => {
@@ -935,6 +961,8 @@ function startWebsocket(
       delete: del,
       pDelete,
       set,
+      sPubInit,
+      sPub,
       publish,
       subscribe,
       pSubscribe,
@@ -999,34 +1027,29 @@ function startWebsocket(
     };
 
     const processStateMsg = <T extends Value>(msg: StateMsg<T>) => {
-      const { transactionId, keyValue, deleted } = msg.state;
+      const { transactionId, value, deleted } = msg.state;
 
-      if (keyValue) {
+      if (value !== undefined) {
         const pendingGet = pendingGets.get(transactionId);
         if (pendingGet) {
           pendingGets.delete(transactionId);
-          pendingGet[0](keyValue.value);
+          pendingGet[0](value);
+        }
+        const subscription = subscriptions.get(transactionId);
+        if (subscription) {
+          subscription[0]({ value });
         }
       }
 
-      if (deleted) {
+      if (deleted !== undefined) {
         const pendingDelete = pendingDeletes.get(transactionId);
         if (pendingDelete) {
           pendingDeletes.delete(transactionId);
-          pendingDelete[0](deleted.value);
+          pendingDelete[0](value);
         }
-      }
-
-      const event = keyValue
-        ? { value: keyValue.value }
-        : deleted
-        ? { deleted: deleted.value }
-        : undefined;
-
-      if (event) {
         const subscription = subscriptions.get(transactionId);
         if (subscription) {
-          subscription[0](event);
+          subscription[0]({ deleted });
         }
       }
     };
@@ -1044,6 +1067,12 @@ function startWebsocket(
       if (pendingPublish) {
         pendingSets.delete(transactionId);
         pendingPublish[0]();
+      }
+
+      const pendingSpubInit = pendingSpubInits.get(transactionId);
+      if (pendingSpubInit) {
+        pendingSpubInits.delete(transactionId);
+        pendingSpubInit[0](transactionId);
       }
     };
 
