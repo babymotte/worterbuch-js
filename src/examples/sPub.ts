@@ -7,8 +7,6 @@ async function main() {
 
   let pubTid = await wb.sPubInit("hello/world");
 
-  console.log(pubTid);
-
   for (let i = 0; i < 10; i++) {
     wb.sPub(pubTid, i);
   }
