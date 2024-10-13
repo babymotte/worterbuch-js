@@ -17,7 +17,7 @@
 import { CloseEvent, Socket } from "./socket";
 import { WbError } from "./error";
 
-const SUPPORTED_PROTOCOL_VERSIONS = ["0.10"];
+const SUPPORTED_PROTOCOL_VERSIONS = ["0.11"];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export { WbError } from "./error";
