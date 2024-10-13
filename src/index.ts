@@ -284,12 +284,11 @@ export type Rejection = (reason?: any) => void;
 
 export function connect(
   address: string,
-  authToken?: string,
-  keepaliveTimeout?: number
+  authToken?: string
 ): Promise<Worterbuch> {
   return new Promise((res, rej) => {
     try {
-      startWebsocket(res, rej, address, authToken, keepaliveTimeout);
+      startWebsocket(res, rej, address, authToken);
     } catch (err) {
       rej(err);
     }
@@ -308,52 +307,8 @@ function startWebsocket(
   res: (value: Worterbuch | PromiseLike<Worterbuch>) => void,
   rej: (reason?: any) => void,
   address: string,
-  authToken: string | undefined,
-  keepaliveTimeout: number | undefined
+  authToken: string | undefined
 ) {
-  let MAX_LAG = 5_000;
-
-  if (keepaliveTimeout !== undefined) {
-    MAX_LAG = keepaliveTimeout * 1_000;
-  } else if (
-    typeof process === "object" &&
-    process.env !== undefined &&
-    process.env.WORTERBUCH_KEEPALIVE_TIMEOUT !== undefined
-  ) {
-    try {
-      MAX_LAG = parseInt(process.env.WORTERBUCH_KEEPALIVE_TIMEOUT) * 1_000;
-    } catch (e) {
-      console.error(
-        "Invalid value of WORTERBUCH_KEEPALIVE_TIMEOUT:",
-        process.env.WORTERBUCH_KEEPALIVE_TIMEOUT
-      );
-    }
-  }
-  if (typeof window !== "undefined" && window?.localStorage) {
-    const timeoutItem = window.localStorage.getItem(
-      "worterbuch.keepalive.timeout"
-    );
-    if (timeoutItem != null) {
-      try {
-        const timeout = JSON.parse(timeoutItem);
-        if (typeof timeout === "number") {
-          MAX_LAG = timeout * 1_000;
-        } else {
-          throw new Error("stored timeout is not a number");
-        }
-      } catch (err: any) {
-        console.warn(
-          "Could not load keepalive timeout from storage:",
-          err.message
-        );
-      }
-    }
-  }
-
-  let keepalive: NodeJS.Timeout | number;
-  let lastMsgReceived: number;
-  let lastMsgSent: number;
-
   let connected = false;
   let closing = false;
 
@@ -379,7 +334,6 @@ function startWebsocket(
     ) => {
       const buf = encode_client_message(msg);
       socket.send(buf);
-      lastMsgSent = Date.now();
     };
 
     const requestAuthorization = (clientId: string) => {
@@ -709,38 +663,6 @@ function startWebsocket(
       sendMsg(msg, socket);
     };
 
-    const checkKeepalive = () => {
-      const lag = lastMsgSent - lastMsgReceived;
-      if (lag >= 2000) {
-        if (closing) {
-          if (!socket.isClosed()) {
-            console.error("Clean disconnect failed, terminating connection.");
-            if (socket.onerror) {
-              socket.onerror();
-            }
-            if (socket.onclose) {
-              socket.onclose();
-            }
-            clearInterval(keepalive);
-            return;
-          }
-          console.log(
-            `Waiting for websocket to close (closed: ${socket.isClosed()}) …`
-          );
-          return;
-        }
-        console.warn(
-          `Server has been inactive for ${Math.round(
-            (lastMsgSent - lastMsgReceived) / 1000
-          )} seconds.`
-        );
-      }
-      if (lag >= MAX_LAG) {
-        console.log("Server has been inactive for too long. Disconnecting …");
-        close();
-      }
-    };
-
     const clientIdHolder = { clientId: "" };
     const clientId = () => clientIdHolder.clientId;
 
@@ -1002,7 +924,6 @@ function startWebsocket(
           )
         );
       }
-      clearInterval(keepalive);
       state.connected = false;
       if (connection.onclose) {
         connection.onclose(e);
@@ -1019,11 +940,6 @@ function startWebsocket(
         rej(e);
         close();
       }
-    };
-
-    const sendKeepalive = () => {
-      socket.send(JSON.stringify(""));
-      lastMsgSent = Date.now();
     };
 
     const processStateMsg = <T extends Value>(msg: StateMsg<T>) => {
@@ -1285,13 +1201,6 @@ function startWebsocket(
         SUPPORTED_PROTOCOL_VERSIONS.includes(msg.welcome.info.protocolVersion)
       ) {
         clientIdHolder.clientId = msg.welcome.clientId;
-        if (keepalive) {
-          clearInterval(keepalive);
-        }
-        keepalive = setInterval(() => {
-          checkKeepalive();
-          sendKeepalive();
-        }, 1000);
         if (msg.welcome.info.authorizationRequired) {
           requestAuthorization(msg.welcome.clientId);
         } else {
@@ -1313,7 +1222,6 @@ function startWebsocket(
     };
 
     socket.onmessage = async (e: string) => {
-      lastMsgReceived = Date.now();
       const msg: ServerMessage<Value> = decode_server_message(e);
 
       if (connection.onmessage) {
