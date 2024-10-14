@@ -25,8 +25,9 @@ export { WbError } from "./error";
 export type Key = string;
 export type RequestPattern = string;
 export type RequestPatterns = RequestPattern[];
+export type ValueObject = { [key: string]: Value };
 export type Value =
-  | { [key: string]: Value }
+  | ValueObject
   | Array<Value>
   | string
   | number

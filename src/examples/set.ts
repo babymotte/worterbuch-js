@@ -1,5 +1,9 @@
-import { Worterbuch } from "..";
+import { ValueObject, Worterbuch } from "..";
 import { connect } from "./util";
+
+interface MyValue extends ValueObject {
+  hello: string;
+}
 
 async function main() {
   let wb: Worterbuch;
@@ -9,6 +13,14 @@ async function main() {
     console.error("Could not connect:", err.message);
     return;
   }
+
+  // interface compatible
+  const something: MyValue = {
+    hello: "world",
+  };
+  await wb.set<MyValue>("hello", something);
+  let it = await wb.get<MyValue>("hello");
+  console.log(it);
 
   // synchronous with await and error handling:
   try {
@@ -38,6 +50,8 @@ async function main() {
   wb.set("hello", "world");
   // this should crash the program
   wb.set("$SYS/private/cannot/set", "hello");
+
+  wb.close();
 }
 
 main();
