@@ -253,6 +253,7 @@ export type Worterbuch = {
   ) => void;
   setClientName: (clientName: string) => void;
   cached: () => WbCache;
+  serverAddress?: string;
 };
 
 export type WbCache = {
@@ -288,11 +289,14 @@ export async function connect(
   authToken?: string
 ): Promise<Worterbuch> {
   if (typeof address === "string") {
-    return await tryConnect(address, authToken);
+    const wb = await tryConnect(address, authToken);
+    wb.serverAddress = address;
+    return wb;
   } else {
     for (const addr of address) {
       try {
         const wb = await tryConnect(addr, authToken);
+        wb.serverAddress = addr;
         return wb;
       } catch (e: any) {
         console.error(`Could not connect to ${addr}: ${e.message}`);
