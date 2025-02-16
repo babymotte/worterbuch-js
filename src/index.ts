@@ -283,10 +283,27 @@ export enum ErrorCodes {
 
 export type Rejection = (reason?: any) => void;
 
-export function connect(
-  address: string,
+export async function connect(
+  address: string | string[],
   authToken?: string
 ): Promise<Worterbuch> {
+  if (typeof address === "string") {
+    return await tryConnect(address, authToken);
+  } else {
+    for (const addr of address) {
+      try {
+        const wb = await tryConnect(addr, authToken);
+        return wb;
+      } catch (e: any) {
+        console.error(`Could not connect to ${addr}: ${e.message}`);
+      }
+    }
+
+    throw new Error("could not connect to any of the provided addresses");
+  }
+}
+
+function tryConnect(address: string, authToken?: string): Promise<Worterbuch> {
   return new Promise((res, rej) => {
     try {
       startWebsocket(res, rej, address, authToken);
@@ -935,7 +952,7 @@ function startWebsocket(
       if (connection.onconnectionerror) {
         connection.onconnectionerror(e);
       } else {
-        console.error("Error in websocket connection.");
+        console.error("Error in worterbuch connection.");
       }
       if (!connected) {
         rej(e);
