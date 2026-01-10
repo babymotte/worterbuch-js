@@ -15,13 +15,13 @@
   "author": "Michael Bachmann <mbachmann@bbmsoft.net>",
   "license": "Apache-2.0",
   "devDependencies": {
-    "@types/node": "^20.8.2",
-    "@types/uuid": "^9.0.0",
-    "typescript": "^5.2.2"
+    "@types/node": "^25.0.5",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "isomorphic-ws": "^5.0.0",
-    "js-sha256": "^0.10.1",
+    "js-sha256": "^0.11.1",
     "net-browserify-stub": "^0.0.1"
   },
   "repository": {
