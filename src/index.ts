@@ -118,6 +118,19 @@ export type SubscribeLs = {
 export type UnsubscribeLs = {
   transactionId: number;
 };
+export type Lock = {
+  transactionId: number;
+  key: string;
+};
+export type AcquireLock = {
+  transactionId: number;
+  key: string;
+};
+export type ReleaseLock = {
+  transactionId: number;
+  key: string;
+};
+
 export type AckMsg = { ack: Ack };
 export type StateMsg<T extends Value> = { state: State<T> };
 export type PStateMsg<T extends Value> = { pState: PState<T> };
@@ -175,6 +188,19 @@ export type SubscribeLsMsg = {
 export type UnsubscribeLsMsg = {
   unsubscribeLs: UnsubscribeLs;
 };
+
+export type LockMsg = {
+  lock: Lock;
+};
+
+export type AcquireLockMsg = {
+  acquireLock: AcquireLock;
+};
+
+export type ReleaseLockMsg = {
+  releaseLock: ReleaseLock;
+};
+
 export type ServerMessage<T extends Value> =
   | AckMsg
   | StateMsg<T>
@@ -199,7 +225,10 @@ export type ClientMessage<T extends Value> =
   | LsMsg
   | PLsMsg
   | SubscribeLsMsg
-  | UnsubscribeLsMsg;
+  | UnsubscribeLsMsg
+  | LockMsg
+  | AcquireLockMsg
+  | ReleaseLockMsg;
 
 export type Worterbuch = {
   get: <T extends Value>(key: Key) => Promise<T | undefined>;
@@ -238,6 +267,11 @@ export type Worterbuch = {
     onerror?: Rejection
   ) => TransactionID;
   unsubscribeLs: (transactionID: TransactionID) => void;
+  lock: (key: Key) => Promise<boolean>;
+  acquireLock: (key: Key) => Promise<void>;
+  releaseLock: (key: Key) => Promise<boolean>;
+  tryLocked: <T>(key: Key, action: () => T) => Promise<T | undefined>;
+  locked: <T>(key: Key, action: () => T) => Promise<T>;
   close: () => void;
   onclose?: (event?: CloseEvent) => any;
   onerror?: (event: Err) => any;
@@ -413,6 +447,15 @@ function startWebsocket(
     const lssubscriptions = new Map<
       TransactionID,
       [LsCallback, Rejection | undefined]
+    >();
+    const pendingLocks = new Map<TransactionID, [AckCallback, Rejection]>();
+    const pendingAcquireLocks = new Map<
+      TransactionID,
+      [AckCallback, Rejection]
+    >();
+    const pendingReleaseLocks = new Map<
+      TransactionID,
+      [AckCallback, Rejection]
     >();
 
     const get = <T extends Value>(key: Key): Promise<T | undefined> => {
@@ -685,6 +728,69 @@ function startWebsocket(
       sendMsg(msg, socket);
     };
 
+    const lock = (key: Key): Promise<boolean> => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        lock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
+      return new Promise((onack) => {
+        pendingLocks.set(transactionId, [
+          () => onack(true),
+          () => onack(false),
+        ]);
+      });
+    };
+
+    const acquireLock = (key: Key): Promise<void> => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        acquireLock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
+      return new Promise((onack, reject) => {
+        pendingAcquireLocks.set(transactionId, [onack, reject]);
+      });
+    };
+
+    const releaseLock = (key: Key): Promise<boolean> => {
+      const transactionId = nextTransactionId();
+      const msg = {
+        releaseLock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
+      return new Promise((onack) => {
+        pendingReleaseLocks.set(transactionId, [
+          () => onack(true),
+          () => onack(false),
+        ]);
+      });
+    };
+
+    const locked = async <T>(key: Key, action: () => T): Promise<T> => {
+      await acquireLock(key);
+      try {
+        return await action();
+      } finally {
+        await releaseLock(key);
+      }
+    };
+
+    const tryLocked = async <T>(
+      key: Key,
+      action: () => T
+    ): Promise<T | undefined> => {
+      if (await lock(key)) {
+        try {
+          return await action();
+        } finally {
+          await releaseLock(key);
+        }
+      } else {
+        return undefined;
+      }
+    };
+
     const clientIdHolder = { clientId: "" };
     const clientId = () => clientIdHolder.clientId;
 
@@ -915,6 +1021,11 @@ function startWebsocket(
       pLs,
       subscribeLs,
       unsubscribeLs,
+      lock,
+      acquireLock,
+      locked,
+      tryLocked,
+      releaseLock,
       close,
       graveGoods,
       lastWill,
@@ -1011,6 +1122,24 @@ function startWebsocket(
       if (pendingSpubInit) {
         pendingSpubInits.delete(transactionId);
         pendingSpubInit[0](transactionId);
+      }
+
+      const pendingLock = pendingLocks.get(transactionId);
+      if (pendingLock) {
+        pendingLocks.delete(transactionId);
+        pendingLock[0]();
+      }
+
+      const pendingAcquireLock = pendingAcquireLocks.get(transactionId);
+      if (pendingAcquireLock) {
+        pendingAcquireLocks.delete(transactionId);
+        pendingAcquireLock[0]();
+      }
+
+      const pendingReleaseLock = pendingReleaseLocks.get(transactionId);
+      if (pendingReleaseLock) {
+        pendingReleaseLocks.delete(transactionId);
+        pendingReleaseLock[0]();
       }
     };
 
@@ -1164,6 +1293,48 @@ function startWebsocket(
         } else {
           console.error(
             `Error in publish with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingLock = pendingLocks.get(transactionId);
+      if (pendingLock) {
+        pendingLocks.delete(transactionId);
+        let [_, reject] = pendingLock;
+        if (reject) {
+          reject(new WbError(msg.err));
+        } else {
+          console.error(
+            `Error in lock with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingAcquireLock = pendingAcquireLocks.get(transactionId);
+      if (pendingAcquireLock) {
+        pendingAcquireLocks.delete(transactionId);
+        let [_, reject] = pendingAcquireLock;
+        if (reject) {
+          reject(new WbError(msg.err));
+        } else {
+          console.error(
+            `Error in acquireLock with transaction ID '${transactionId}'`,
+            msg.err
+          );
+        }
+      }
+
+      const pendingReleaseLock = pendingReleaseLocks.get(transactionId);
+      if (pendingReleaseLock) {
+        pendingReleaseLocks.delete(transactionId);
+        let [_, reject] = pendingReleaseLock;
+        if (reject) {
+          reject(new WbError(msg.err));
+        } else {
+          console.error(
+            `Error in releaseLock with transaction ID '${transactionId}'`,
             msg.err
           );
         }

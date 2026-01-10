@@ -1,6 +1,6 @@
 {
   "name": "worterbuch-js",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A high level Wörterbuch web client for TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
