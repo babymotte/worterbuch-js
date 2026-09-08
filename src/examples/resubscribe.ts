@@ -20,7 +20,7 @@ async function main() {
 async function subUnsub(wb: Worterbuch) {
   await sleep(1);
   console.log("subscribing");
-  let sid = wb.subscribe("hello", console.log);
+  let sid = await wb.subscribe("hello", console.log);
 
   await sleep(1);
   console.log("unsubscribing");

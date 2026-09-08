@@ -6,7 +6,7 @@ async function main() {
 
   wb.pDelete("hello/#");
 
-  let sid = wb.subscribeLs("hello", console.log);
+  let sid = await wb.subscribeLs("hello", console.log);
 
   await sleep(1);
   wb.set("hello/there", 123);
