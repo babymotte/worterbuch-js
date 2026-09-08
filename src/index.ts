@@ -17,7 +17,11 @@
 import { CloseEvent, Socket } from "./socket";
 import { WbError } from "./error";
 
-const SUPPORTED_PROTOCOL_VERSIONS = ["0.11"];
+const SUPPORTED_PROTOCOL_VERSIONS: [number, number][] = [
+  [0, 11],
+  [1, 1],
+  [2, 0],
+];
 const URL_REGEX = /^(.+):\/\/(.+?)(?::([0-9]+))?(?:\/(.+))?$/;
 
 export { WbError } from "./error";
@@ -66,6 +70,7 @@ export type LockLostCallback = () => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
 export type AuthorizationRequest = { authToken: string };
+export type ProtocolSwitchRequest = { version: number };
 export type State<T extends Value> = {
   transactionId: TransactionID;
   value: T | undefined;
@@ -84,7 +89,7 @@ export type Err = {
   metadata: any;
 };
 export type ServerInfo = {
-  protocolVersion: string;
+  supportedProtocolVersions: [number, number][];
   authorizationRequired: boolean;
 };
 export type Get = { transactionId: number; key: string };
@@ -143,6 +148,9 @@ export type LsStateMsg = {
 };
 export type AuthorizationRequestMsg = {
   authorizationRequest: AuthorizationRequest;
+};
+export type ProtocolSwitchRequestMsg = {
+  protocolSwitchRequest: ProtocolSwitchRequest;
 };
 export type SetMsg<T extends Value> = {
   set: { transactionId: number; key: string; value: T };
@@ -212,6 +220,7 @@ export type ServerMessage<T extends Value> =
   | LsStateMsg;
 export type ClientMessage<T extends Value> =
   | AuthorizationRequestMsg
+  | ProtocolSwitchRequestMsg
   | SetMsg<T>
   | SPubInitMsg
   | SPubMsg<T>
@@ -232,16 +241,15 @@ export type ClientMessage<T extends Value> =
   | ReleaseLockMsg;
 
 export type Result<T> = { ok: T } | { err: Err };
-export class ResponsePromise<T> extends Promise<T> {
-  transactionId: TransactionID;
 
-  constructor(transactionId: TransactionID, promise: PromiseLike<T>) {
-    super((resolve, reject) => {
-      promise.then(resolve, reject);
-    });
-    this.transactionId = transactionId;
-  }
-}
+export type ResponsePromise<T> = Promise<T> & {
+  readonly transactionId: TransactionID;
+};
+
+const responsePromise = <T>(
+  transactionId: TransactionID,
+  promise: Promise<T>,
+): ResponsePromise<T> => Object.assign(promise, { transactionId });
 
 export type Worterbuch = {
   get: <T extends Value>(key: Key) => ResponsePromise<T>;
@@ -440,6 +448,11 @@ function startWebsocket(
       }
     };
 
+    const sendProtocolSwitchRequest = (version: number) => {
+      const msg = { protocolSwitchRequest: { version } };
+      sendMsg(msg, socket);
+    };
+
     const state = {
       transactionId: 1,
       connected: false,
@@ -501,50 +514,46 @@ function startWebsocket(
 
     const get = <T extends Value>(key: Key): ResponsePromise<T> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { get: { transactionId, key } };
+      sendMsg(msg, socket);
 
-          const msg = { get: { transactionId, key } };
-          sendMsg(msg, socket);
-          pendingGets.set(transactionId, [(v) => resolve(v as T), reject]);
-        }),
-      );
+      const promise = new Promise<T>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingGets.set(transactionId, [(v) => resolve(v as T), reject]);
+      });
+
+      return responsePromise<T>(transactionId, promise);
     };
 
     const pGet = <T extends Value>(
       requestPattern: RequestPattern,
     ): ResponsePromise<KeyValuePairs<T>> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { pGet: { transactionId, requestPattern } };
+      sendMsg(msg, socket);
 
-          const msg = { pGet: { transactionId, requestPattern } };
-          sendMsg(msg, socket);
-          pendingPGets.set(transactionId, [
-            (v) => resolve(v as KeyValuePairs<T>),
-            reject,
-          ]);
-          return transactionId;
-        }),
-      );
+      const promise = new Promise<KeyValuePairs<T>>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingPGets.set(transactionId, [
+          (v) => resolve(v as KeyValuePairs<T>),
+          reject,
+        ]);
+      });
+
+      return responsePromise<KeyValuePairs<T>>(transactionId, promise);
     };
 
     const del = <T extends Value>(key: Key): ResponsePromise<T> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { delete: { transactionId, key } };
+      sendMsg(msg, socket);
 
-          const msg = { delete: { transactionId, key } };
-          sendMsg(msg, socket);
-          pendingDeletes.set(transactionId, [(v) => resolve(v as T), reject]);
-        }),
-      );
+      const promise = new Promise<T>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingDeletes.set(transactionId, [(v) => resolve(v as T), reject]);
+      });
+
+      return responsePromise<T>(transactionId, promise);
     };
 
     const pDelete = <T extends Value>(
@@ -552,19 +561,18 @@ function startWebsocket(
       quiet?: boolean,
     ): ResponsePromise<KeyValuePairs<T>> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { pDelete: { transactionId, requestPattern, quiet } };
+      sendMsg(msg, socket);
 
-          const msg = { pDelete: { transactionId, requestPattern, quiet } };
-          pendingPDeletes.set(transactionId, [
-            (v) => resolve(v as KeyValuePairs<T>),
-            reject,
-          ]);
-          sendMsg(msg, socket);
-        }),
-      );
+      const promise = new Promise<KeyValuePairs<T>>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingPDeletes.set(transactionId, [
+          (v) => resolve(v as KeyValuePairs<T>),
+          reject,
+        ]);
+      });
+
+      return responsePromise<KeyValuePairs<T>>(transactionId, promise);
     };
 
     const set = <T extends Value>(
@@ -572,30 +580,28 @@ function startWebsocket(
       value: T,
     ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { set: { transactionId, key, value } };
+      sendMsg(msg, socket);
 
-          const msg = { set: { transactionId, key, value } };
-          sendMsg(msg, socket);
-          pendingSets.set(transactionId, [() => resolve(), reject]);
-        }),
-      );
+      const promise = new Promise<void>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingSets.set(transactionId, [() => resolve(), reject]);
+      });
+
+      return responsePromise<void>(transactionId, promise);
     };
 
     const sPubInit = (key: Key): ResponsePromise<TransactionID> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { sPubInit: { transactionId, key } };
+      sendMsg(msg, socket);
 
-          const msg = { sPubInit: { transactionId, key } };
-          sendMsg(msg, socket);
-          pendingSpubInits.set(transactionId, [resolve, reject]);
-        }),
-      );
+      const promise = new Promise<TransactionID>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingSpubInits.set(transactionId, [resolve, reject]);
+      });
+
+      return responsePromise<TransactionID>(transactionId, promise);
     };
 
     const sPub = <T extends Value>(transactionId: TransactionID, value: T) => {
@@ -608,16 +614,15 @@ function startWebsocket(
       value: T,
     ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { publish: { transactionId, key, value } };
+      sendMsg(msg, socket);
 
-          const msg = { publish: { transactionId, key, value } };
-          sendMsg(msg, socket);
-          pendingPublishes.set(transactionId, [resolve, reject]);
-        }),
-      );
+      const promise = new Promise<void>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingPublishes.set(transactionId, [resolve, reject]);
+      });
+
+      return responsePromise<void>(transactionId, promise);
     };
 
     const subscribe = <T extends Value>(
@@ -627,25 +632,26 @@ function startWebsocket(
       liveOnly?: boolean,
     ): ResponsePromise<TransactionID> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          const msg = {
-            subscribe: {
-              transactionId,
-              key,
-              unique: unique || false,
-              liveOnly: liveOnly || false,
-            },
-          };
-          sendMsg(msg, socket);
-          subscriptions.set(transactionId, [
-            resolve,
-            onmessage as StateCallback<Value>,
-            reject,
-          ]);
-        }),
-      );
+      const msg = {
+        subscribe: {
+          transactionId,
+          key,
+          unique: unique || false,
+          liveOnly: liveOnly || false,
+        },
+      };
+      sendMsg(msg, socket);
+
+      const promise = new Promise<TransactionID>((resolve, reject) => {
+        // TODO reject after timeout?
+        subscriptions.set(transactionId, [
+          resolve,
+          onmessage as StateCallback<Value>,
+          reject,
+        ]);
+      });
+
+      return responsePromise<TransactionID>(transactionId, promise);
     };
 
     const pSubscribe = <T extends Value>(
@@ -655,25 +661,25 @@ function startWebsocket(
       liveOnly?: boolean,
     ): ResponsePromise<TransactionID> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          const msg = {
-            pSubscribe: {
-              transactionId,
-              requestPattern,
-              unique: unique || false,
-              liveOnly: liveOnly || false,
-            },
-          };
-          sendMsg(msg, socket);
-          psubscriptions.set(transactionId, [
-            resolve,
-            onmessage as PStateCallback<Value>,
-            reject,
-          ]);
-        }),
-      );
+      const msg = {
+        pSubscribe: {
+          transactionId,
+          requestPattern,
+          unique: unique || false,
+          liveOnly: liveOnly || false,
+        },
+      };
+      sendMsg(msg, socket);
+      const promise = new Promise<TransactionID>((resolve, reject) => {
+        // TODO reject after timeout?
+        psubscriptions.set(transactionId, [
+          resolve,
+          onmessage as PStateCallback<Value>,
+          reject,
+        ]);
+      });
+
+      return responsePromise<TransactionID>(transactionId, promise);
     };
 
     const unsubscribe = (transactionId: TransactionID) => {
@@ -689,30 +695,28 @@ function startWebsocket(
 
     const ls = (parent?: Key): ResponsePromise<Children> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { ls: { transactionId, parent } };
+      sendMsg(msg, socket);
 
-          const msg = { ls: { transactionId, parent } };
-          sendMsg(msg, socket);
-          pendingLsStates.set(transactionId, [resolve, reject]);
-        }),
-      );
+      const promise = new Promise<Children>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingLsStates.set(transactionId, [resolve, reject]);
+      });
+
+      return responsePromise<Children>(transactionId, promise);
     };
 
     const pLs = (parentPattern?: RequestPattern): ResponsePromise<Children> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = { pLs: { transactionId, parentPattern } };
+      sendMsg(msg, socket);
 
-          const msg = { pLs: { transactionId, parentPattern } };
-          sendMsg(msg, socket);
-          pendingLsStates.set(transactionId, [resolve, reject]);
-        }),
-      );
+      const promise = new Promise<Children>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingLsStates.set(transactionId, [resolve, reject]);
+      });
+
+      return responsePromise<Children>(transactionId, promise);
     };
 
     const subscribeLs = (
@@ -720,18 +724,17 @@ function startWebsocket(
       onmessage: LsCallback,
     ): ResponsePromise<TransactionID> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = {
+        subscribeLs: { transactionId, parent },
+      };
+      sendMsg(msg, socket);
 
-          const msg = {
-            subscribeLs: { transactionId, parent },
-          };
-          sendMsg(msg, socket);
-          lssubscriptions.set(transactionId, [resolve, onmessage, reject]);
-        }),
-      );
+      const promise = new Promise<TransactionID>((resolve, reject) => {
+        // TODO reject after timeout?
+        lssubscriptions.set(transactionId, [resolve, onmessage, reject]);
+      });
+
+      return responsePromise<TransactionID>(transactionId, promise);
     };
 
     const unsubscribeLs = (transactionId: TransactionID) => {
@@ -747,23 +750,21 @@ function startWebsocket(
       onLockLost?: LockLostCallback,
     ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
+      const msg = {
+        lock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
 
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const promise = new Promise<void>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingLocks.set(transactionId, [
+          resolve,
+          reject,
+          onLockLost ? [key, onLockLost] : undefined,
+        ]);
+      });
 
-          const msg = {
-            lock: { transactionId, key },
-          };
-          sendMsg(msg, socket);
-          pendingLocks.set(transactionId, [
-            resolve,
-            reject,
-            onLockLost ? [key, onLockLost] : undefined,
-          ]);
-        }),
-      );
+      return responsePromise<void>(transactionId, promise);
     };
 
     const acquireLock = (
@@ -771,39 +772,36 @@ function startWebsocket(
       onLockLost?: LockLostCallback,
     ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const msg = {
+        acquireLock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
 
-          const msg = {
-            acquireLock: { transactionId, key },
-          };
-          sendMsg(msg, socket);
-          pendingAcquireLocks.set(transactionId, [
-            resolve,
-            reject,
-            onLockLost ? [key, onLockLost] : undefined,
-          ]);
-        }),
-      );
+      const promise = new Promise<void>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingAcquireLocks.set(transactionId, [
+          resolve,
+          reject,
+          onLockLost ? [key, onLockLost] : undefined,
+        ]);
+      });
+
+      return responsePromise<void>(transactionId, promise);
     };
 
     const releaseLock = (key: Key): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
+      const msg = {
+        releaseLock: { transactionId, key },
+      };
+      sendMsg(msg, socket);
 
-      return new ResponsePromise(
-        transactionId,
-        new Promise((resolve, reject) => {
-          // TODO reject after timeout?
+      const promise = new Promise<void>((resolve, reject) => {
+        // TODO reject after timeout?
+        pendingReleaseLocks.set(transactionId, [resolve, reject, key]);
+      });
 
-          const msg = {
-            releaseLock: { transactionId, key },
-          };
-          sendMsg(msg, socket);
-          pendingReleaseLocks.set(transactionId, [resolve, reject, key]);
-        }),
-      );
+      return responsePromise<void>(transactionId, promise);
     };
 
     const locked = async <T>(key: Key, action: () => T): Promise<T> => {
@@ -1300,11 +1298,14 @@ function startWebsocket(
     const processErrMsg = (msg: ErrMsg) => {
       const transactionId = msg.err.transactionId;
 
+      let handled = false;
+
       const pendingGet = pendingGets.get(transactionId);
       if (pendingGet) {
         pendingGets.delete(transactionId);
         let [_, reject] = pendingGet;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingDelete = pendingDeletes.get(transactionId);
@@ -1312,6 +1313,7 @@ function startWebsocket(
         pendingDeletes.delete(transactionId);
         let [_, reject] = pendingDelete;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingPGet = pendingPGets.get(transactionId);
@@ -1319,6 +1321,7 @@ function startWebsocket(
         pendingPGets.delete(transactionId);
         let [_, reject] = pendingPGet;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingPDelete = pendingPDeletes.get(transactionId);
@@ -1326,6 +1329,7 @@ function startWebsocket(
         pendingPDeletes.delete(transactionId);
         let [_, reject] = pendingPDelete;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingLs = pendingLsStates.get(transactionId);
@@ -1333,6 +1337,7 @@ function startWebsocket(
         pendingLsStates.delete(transactionId);
         let [_, reject] = pendingLs;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingSet = pendingSets.get(transactionId);
@@ -1340,6 +1345,7 @@ function startWebsocket(
         pendingSets.delete(transactionId);
         let [_, reject] = pendingSet;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingPublish = pendingPublishes.get(transactionId);
@@ -1347,6 +1353,7 @@ function startWebsocket(
         pendingPublishes.delete(transactionId);
         let [_, reject] = pendingPublish;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingLock = pendingLocks.get(transactionId);
@@ -1354,6 +1361,7 @@ function startWebsocket(
         pendingLocks.delete(transactionId);
         let [_, reject] = pendingLock;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingAcquireLock = pendingAcquireLocks.get(transactionId);
@@ -1361,6 +1369,7 @@ function startWebsocket(
         pendingAcquireLocks.delete(transactionId);
         let [_, reject] = pendingAcquireLock;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const pendingReleaseLock = pendingReleaseLocks.get(transactionId);
@@ -1368,6 +1377,7 @@ function startWebsocket(
         pendingReleaseLocks.delete(transactionId);
         let [_, reject] = pendingReleaseLock;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const subscription = subscriptions.get(transactionId);
@@ -1375,6 +1385,7 @@ function startWebsocket(
         subscriptions.delete(transactionId);
         let [_, __, reject] = subscription;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const psubscription = psubscriptions.get(transactionId);
@@ -1382,6 +1393,7 @@ function startWebsocket(
         psubscriptions.delete(transactionId);
         let [_, __, reject] = psubscription;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       const lssubscription = lssubscriptions.get(transactionId);
@@ -1389,6 +1401,7 @@ function startWebsocket(
         lssubscriptions.delete(transactionId);
         let [_, __, reject] = lssubscription;
         reject(new WbError(msg.err));
+        handled = true;
       }
 
       if (msg.err.errorCode === ErrorCodes.LockLost) {
@@ -1413,32 +1426,38 @@ function startWebsocket(
         }
         if (pendingLostLock) {
           pendingLostLock();
+          handled = true;
         }
       }
 
       if (connection.onerror) {
         connection.onerror(msg.err);
-      } else {
-        console.error(
+      } else if (!handled) {
+        console.warn(
           `Received error code ${msg.err.errorCode} from server:`,
           msg.err.metadata,
         );
       }
     };
 
+    let protocolVersion = 0;
+
     const processWelcomeMsg = (msg: WelcomeMsg) => {
-      if (
-        SUPPORTED_PROTOCOL_VERSIONS.includes(msg.welcome.info.protocolVersion)
-      ) {
+      const bestProtocolVersion = findBestProtocolVersion(
+        msg.welcome.info.supportedProtocolVersions,
+      );
+      if (bestProtocolVersion) {
+        protocolVersion = bestProtocolVersion[0];
         clientIdHolder.clientId = msg.welcome.clientId;
         if (msg.welcome.info.authorizationRequired) {
           requestAuthorization(msg.welcome.clientId);
         } else {
+          sendProtocolSwitchRequest(protocolVersion);
           connected = true;
           res(connection);
         }
       } else {
-        const err = `Protocol version ${msg.welcome.info.protocolVersion} is not supported by this client!`;
+        const err = `No compatible protocol version found.`;
         connected = false;
         rej(new Error(err));
         close();
@@ -1447,6 +1466,7 @@ function startWebsocket(
 
     const processAuthorizedMsg = (msg: AuthorizedMsg) => {
       console.info("Authorization successful.");
+      sendProtocolSwitchRequest(protocolVersion);
       connected = true;
       res(connection);
     };
@@ -1531,4 +1551,22 @@ function noActiveSubs<T extends Value>(
     subs.size === 0 ||
     (subs.size === 1 && subs.values().next().value === noOpCallback)
   );
+}
+
+function findBestProtocolVersion(
+  supportedProtocolVersions: [number, number][],
+): [number, number] | null {
+  let supported = [...SUPPORTED_PROTOCOL_VERSIONS];
+  supported.reverse();
+  for (const clientVersion of supported) {
+    for (const serverVersion of supportedProtocolVersions) {
+      if (
+        clientVersion[0] == serverVersion[0] &&
+        clientVersion[1] <= serverVersion[1]
+      ) {
+        return clientVersion;
+      }
+    }
+  }
+  return null;
 }

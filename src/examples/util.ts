@@ -1,10 +1,16 @@
-import { connect as connectWB } from "../index";
+import { connect as connectWB, Worterbuch } from "../index";
 
-export async function connect(authToken?: string) {
+export async function connect(authToken?: string): Promise<Worterbuch> {
   const wb = await connectWB(
     ["tcp://unavailable:8081/ws", "tcp://localhost:8081/ws"],
-    authToken
+    authToken,
   );
+  console.log("Connected to", wb.serverAddress);
+  return wb;
+}
+
+export async function connectTo(url: string): Promise<Worterbuch> {
+  const wb = await connectWB([url]);
   console.log("Connected to", wb.serverAddress);
   return wb;
 }
