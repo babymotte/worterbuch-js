@@ -1,4 +1,4 @@
-import { connect } from "./util";
+import { connect, sleep } from "./util";
 
 async function main() {
   const wb = await connect();
@@ -7,7 +7,8 @@ async function main() {
 
   let pubTid = await wb.sPubInit("hello/world");
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 100; i++) {
+    await sleep(0.01);
     wb.sPub(pubTid, i);
   }
 

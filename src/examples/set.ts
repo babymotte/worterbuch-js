@@ -34,21 +34,21 @@ async function main() {
     await wb.set("$SYS/private/cannot/set", "hello");
     console.log("Synchronous set successful.");
   } catch (e: any) {
-    console.error("Synchronous set failed:", e);
+    console.error("Synchronous set failed:", e.message);
   }
 
   // async with await and error handling:
   wb.set("hello", "world")
     .then(() => console.log("Asynchronous set successful."))
-    .catch((e) => console.error("Synchronous set failed:", e));
+    .catch((e) => console.error("Synchronous set failed:", e.message));
 
   wb.set("$SYS/private/cannot/set", "hello")
     .then(() => console.log("Synchronous set successful."))
-    .catch((e) => console.error("Synchronous set failed:", e));
+    .catch((e) => console.error("Synchronous set failed:", e.message));
 
   // async with no error handling:
   wb.set("hello", "world");
-  // this should crash the program
+  // this will fail silently, make sure, to add a .catch(...) if you want to handle the error.
   wb.set("$SYS/private/cannot/set", "hello");
 
   wb.close();

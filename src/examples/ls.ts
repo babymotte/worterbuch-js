@@ -10,7 +10,7 @@ async function main() {
   wb.set("hello/you", 123);
 
   wb.ls("hello").then(console.log);
-  wb.ls(undefined).then(console.log);
+  wb.ls().then(console.log);
 
   let children = await wb.ls("hello");
   console.log(children);
