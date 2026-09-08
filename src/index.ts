@@ -62,6 +62,7 @@ export type PStateCallback<T extends Value> = (event: PStateEvent<T>) => void;
 export type LsCallback = (children: Children) => void;
 export type AckCallback = () => void;
 export type TidCallback = (tid: TransactionID) => void;
+export type LockLostCallback = () => void;
 export type Ack = { transactionId: TransactionID };
 export type Welcome = { info: ServerInfo; clientId: string };
 export type AuthorizationRequest = { authToken: string };
@@ -279,8 +280,11 @@ export type Worterbuch = {
     onerror?: Rejection,
   ) => ResponsePromise<TransactionID>;
   unsubscribeLs: (transactionID: TransactionID) => void;
-  lock: (key: Key) => ResponsePromise<void>;
-  acquireLock: (key: Key) => ResponsePromise<void>;
+  lock: (key: Key, onLockLost?: LockLostCallback) => ResponsePromise<void>;
+  acquireLock: (
+    key: Key,
+    onLockLost?: LockLostCallback,
+  ) => ResponsePromise<void>;
   releaseLock: (key: Key) => ResponsePromise<void>;
   tryLocked: <T>(key: Key, action: () => T) => Promise<T | undefined>;
   locked: <T>(key: Key, action: () => T) => Promise<T>;
@@ -477,14 +481,22 @@ function startWebsocket(
       TransactionID,
       [TidCallback, LsCallback, Rejection]
     >();
-    const pendingLocks = new Map<TransactionID, [AckCallback, Rejection]>();
+    const pendingLocks = new Map<
+      TransactionID,
+      [AckCallback, Rejection, [Key, LockLostCallback] | undefined]
+    >();
     const pendingAcquireLocks = new Map<
       TransactionID,
-      [AckCallback, Rejection]
+      [AckCallback, Rejection, [Key, LockLostCallback] | undefined]
     >();
+    const pendingLostLocks = {
+      tids: new Map<Key, TransactionID[]>(),
+      keys: new Map<TransactionID, Key>(),
+      callbacks: new Map<TransactionID, LockLostCallback>(),
+    };
     const pendingReleaseLocks = new Map<
       TransactionID,
-      [AckCallback, Rejection]
+      [AckCallback, Rejection, Key]
     >();
 
     const get = <T extends Value>(key: Key): ResponsePromise<T> => {
@@ -730,7 +742,10 @@ function startWebsocket(
       sendMsg(msg, socket);
     };
 
-    const lock = (key: Key): ResponsePromise<void> => {
+    const lock = (
+      key: Key,
+      onLockLost?: LockLostCallback,
+    ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
 
       return new ResponsePromise(
@@ -742,12 +757,19 @@ function startWebsocket(
             lock: { transactionId, key },
           };
           sendMsg(msg, socket);
-          pendingLocks.set(transactionId, [resolve, reject]);
+          pendingLocks.set(transactionId, [
+            resolve,
+            reject,
+            onLockLost ? [key, onLockLost] : undefined,
+          ]);
         }),
       );
     };
 
-    const acquireLock = (key: Key): ResponsePromise<void> => {
+    const acquireLock = (
+      key: Key,
+      onLockLost?: LockLostCallback,
+    ): ResponsePromise<void> => {
       const transactionId = nextTransactionId();
       return new ResponsePromise(
         transactionId,
@@ -758,7 +780,11 @@ function startWebsocket(
             acquireLock: { transactionId, key },
           };
           sendMsg(msg, socket);
-          pendingAcquireLocks.set(transactionId, [resolve, reject]);
+          pendingAcquireLocks.set(transactionId, [
+            resolve,
+            reject,
+            onLockLost ? [key, onLockLost] : undefined,
+          ]);
         }),
       );
     };
@@ -775,7 +801,7 @@ function startWebsocket(
             releaseLock: { transactionId, key },
           };
           sendMsg(msg, socket);
-          pendingReleaseLocks.set(transactionId, [resolve, reject]);
+          pendingReleaseLocks.set(transactionId, [resolve, reject, key]);
         }),
       );
     };
@@ -1128,37 +1154,73 @@ function startWebsocket(
       const pendingSet = pendingSets.get(transactionId);
       if (pendingSet) {
         pendingSets.delete(transactionId);
-        pendingSet[0]();
+        let [resolve, _] = pendingSet;
+        resolve();
       }
 
       const pendingPublish = pendingPublishes.get(transactionId);
       if (pendingPublish) {
-        pendingSets.delete(transactionId);
-        pendingPublish[0]();
+        pendingPublishes.delete(transactionId);
+        let [resolve, _] = pendingPublish;
+        resolve();
       }
 
       const pendingSpubInit = pendingSpubInits.get(transactionId);
       if (pendingSpubInit) {
         pendingSpubInits.delete(transactionId);
-        pendingSpubInit[0](transactionId);
+        let [resolve, _] = pendingSpubInit;
+        resolve(transactionId);
       }
 
       const pendingLock = pendingLocks.get(transactionId);
       if (pendingLock) {
         pendingLocks.delete(transactionId);
-        pendingLock[0]();
+        let [resolve, _, onLockLost] = pendingLock;
+        if (onLockLost) {
+          const [key, callback] = onLockLost;
+          pendingLostLocks.keys.set(transactionId, key);
+          const tids = pendingLostLocks.tids.get(key);
+          if (tids) {
+            tids.push(transactionId);
+          } else {
+            pendingLostLocks.tids.set(key, [transactionId]);
+          }
+          pendingLostLocks.callbacks.set(transactionId, callback);
+        }
+        resolve();
       }
 
       const pendingAcquireLock = pendingAcquireLocks.get(transactionId);
       if (pendingAcquireLock) {
         pendingAcquireLocks.delete(transactionId);
-        pendingAcquireLock[0]();
+        let [resolve, _, onLockLost] = pendingAcquireLock;
+        if (onLockLost) {
+          const [key, callback] = onLockLost;
+          pendingLostLocks.keys.set(transactionId, key);
+          const tids = pendingLostLocks.tids.get(key);
+          if (tids) {
+            tids.push(transactionId);
+          } else {
+            pendingLostLocks.tids.set(key, [transactionId]);
+          }
+          pendingLostLocks.callbacks.set(transactionId, callback);
+        }
+        resolve();
       }
 
       const pendingReleaseLock = pendingReleaseLocks.get(transactionId);
       if (pendingReleaseLock) {
         pendingReleaseLocks.delete(transactionId);
-        pendingReleaseLock[0]();
+        let [resolve, _, key] = pendingReleaseLock;
+        const tids = pendingLostLocks.tids.get(key);
+        pendingLostLocks.tids.delete(key);
+        if (tids) {
+          for (const tid of tids) {
+            pendingLostLocks.keys.delete(tid);
+            pendingLostLocks.callbacks.delete(tid);
+          }
+        }
+        resolve();
       }
 
       const subscription = subscriptions.get(transactionId);
@@ -1327,6 +1389,31 @@ function startWebsocket(
         lssubscriptions.delete(transactionId);
         let [_, __, reject] = lssubscription;
         reject(new WbError(msg.err));
+      }
+
+      if (msg.err.errorCode === ErrorCodes.LockLost) {
+        const pendingLostLock = pendingLostLocks.callbacks.get(transactionId);
+        const key = pendingLostLocks.keys.get(transactionId);
+        pendingLostLocks.callbacks.delete(transactionId);
+        pendingLostLocks.keys.delete(transactionId);
+        if (key !== undefined) {
+          let tids = pendingLostLocks.tids.get(key);
+          if (tids) {
+            for (
+              let idx = tids.indexOf(transactionId);
+              idx !== -1;
+              idx = tids.indexOf(transactionId)
+            ) {
+              tids.splice(idx, 1);
+            }
+            if (tids.length === 0) {
+              pendingLostLocks.tids.delete(key);
+            }
+          }
+        }
+        if (pendingLostLock) {
+          pendingLostLock();
+        }
       }
 
       if (connection.onerror) {
